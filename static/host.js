@@ -122,3 +122,5 @@ if (window.YT && window.YT.Player){ window.onYouTubeIframeAPIReady(); }
 refresh();                    // load ngay khi mở trang
 setInterval(refresh, 2000);   // poll mỗi 2 giây
 
+qs("#btnReload").onclick = refresh;
+
