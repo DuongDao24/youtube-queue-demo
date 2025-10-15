@@ -117,3 +117,8 @@ queueEl.addEventListener('click', async (e)=>{
 
 // bootstrap: if API is already loaded
 if (window.YT && window.YT.Player){ window.onYouTubeIframeAPIReady(); }
+
+// Auto refresh queue/now-playing every 2s so host sees new user submissions
+refresh();                    // load ngay khi mở trang
+setInterval(refresh, 2000);   // poll mỗi 2 giây
+
