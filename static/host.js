@@ -1,4 +1,4 @@
-let HOST_KEY = localStorage.getItem("HOST_KEY") || "";
+let isLoggedIn = false;
 const qs = (s)=>document.querySelector(s);
 const queueEl = qs("#queue");
 const historyEl = qs("#history");
@@ -6,19 +6,15 @@ const countdown = qs("#countdown");
 let player = null;
 let currentId = null;
 let tickTimer = null;
+let pauseRefresh = false;
 
-function headersAuth(){
-  return HOST_KEY ? {"Content-Type":"application/json","X-Host-Key":HOST_KEY} : {"Content-Type":"application/json"};
-}
-function who(it){
-  return (it.by_name ? `${it.by_name} (${it.by_ip||''})` : (it.by_ip||'')); 
-}
+function whoHost(it){ return (it.by_name ? `${it.by_name} (${it.by_ip||''})` : (it.by_ip||'')); }
 function rQueue(it){
   return `<div class="item">
     <img class="thumb" src="https://i.ytimg.com/vi/${it.id}/default.jpg">
     <div class="flex-1">
       <div>${it.title||it.id}</div>
-      <div class="small">by ${who(it)}</div>
+      <div class="small">by ${whoHost(it)}</div>
     </div>
     <button class="btn" data-id="${it.id}">Remove</button>
   </div>`;
@@ -28,10 +24,33 @@ function rHistory(it){
     <img class="thumb" src="https://i.ytimg.com/vi/${it.id}/default.jpg">
     <div>
       <div class="text-sm">${it.title||it.id}</div>
-      <div class="small">by ${who(it)}</div>
+      <div class="small">by ${whoHost(it)}</div>
     </div>
   </div>`;
 }
+
+async function loginRequired(){
+  const r = await fetch('/api/state');
+  if (!isLoggedIn){
+    qs("#loginModal").classList.remove("hidden");
+  }
+}
+
+qs("#btnLogin").onclick = async ()=>{
+  const u = qs("#loginUser").value.trim() || "Admin";
+  const p = qs("#loginPass").value.trim() || "0000";
+  const msg = qs("#loginMsg");
+  msg.textContent = "Signing in...";
+  const r = await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+  const d = await r.json();
+  if (r.ok && d.ok){
+    isLoggedIn = true;
+    qs("#loginModal").classList.add("hidden");
+    await refresh(true);
+  } else {
+    msg.textContent = d.error || "Login failed";
+  }
+};
 
 window.onYouTubeIframeAPIReady = function(){
   player = new YT.Player('player', {
@@ -41,7 +60,7 @@ window.onYouTubeIframeAPIReady = function(){
   });
 }
 function onPlayerReady(){
-  refresh();
+  refresh(true);
   if (tickTimer) clearInterval(tickTimer);
   tickTimer = setInterval(sendProgressTick, 1000);
 }
@@ -52,31 +71,45 @@ function onPlayerStateChange(e){
   }
 }
 async function post(path, body){
-  const r = await fetch(path, {method:'POST', headers: headersAuth(), body: JSON.stringify(body||{})});
+  const r = await fetch(path, {method:'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body||{})});
   return r.json().catch(()=>({}));
 }
-async function refresh(){
+async function refresh(force=false){
+  if (!isLoggedIn){ await loginRequired(); return; }
   const s = await (await fetch('/api/state')).json();
   queueEl.innerHTML = (s.queue||[]).map(rQueue).join("") || '<div class="small">Queue empty</div>';
   historyEl.innerHTML = (s.history||[]).slice(0,15).map(rHistory).join("") || '<div class="small">No history</div>';
-  qs("#rate").value = (s.config && s.config.rate_limit_s) || 180;
-  qs("#nickHours").value = (s.config && s.config.nick_change_hours) || 24;
-
+  if (!pauseRefresh || force){
+    qs("#rate").value = (s.config && s.config.rate_limit_s) || 180;
+    qs("#nickHours").value = (s.config && s.config.nick_change_hours) || 24;
+  }
   const cid = s.current && s.current.id;
-  if (cid && cid !== currentId && player){
-    currentId = cid;
-    player.loadVideoById({videoId: cid, startSeconds: 0, suggestedQuality: 'large'});
+  const prog = s.progress || {};
+  if (cid && player){
+    if (cid !== currentId || force){
+      currentId = cid;
+      const seek = Math.max(0, Math.floor((prog.pos||0)));
+      player.loadVideoById({videoId: cid, startSeconds: seek, suggestedQuality: 'large'});
+    } else {
+      const dur = Number(player.getDuration()||0);
+      const pos = Number(player.getCurrentTime()||0);
+      const target = Math.max(0, Math.floor((prog.pos||0)));
+      if (Math.abs(pos - target) > 3 && dur>0){
+        player.seekTo(target, true);
+      }
+    }
   }
 }
+
 async function sendProgressTick(){
-  if (!player || !HOST_KEY) return;
+  if (!player || !isLoggedIn) return;
   try{
     const dur = Number(player.getDuration() || 0);
     const pos = Number(player.getCurrentTime() || 0);
     const vid = currentId;
     if (dur>0){
       const remain = Math.max(0, dur - pos);
-      if (remain <= 3){
+      if (remain <= 10){
         countdown.classList.remove('hidden');
         countdown.textContent = Math.ceil(remain);
       } else {
@@ -88,39 +121,65 @@ async function sendProgressTick(){
 }
 
 // Controls
-qs("#saveKey").onclick = ()=>{
-  const v = qs("#key").value.trim();
-  if(!v){ alert("Enter HOST_API_KEY"); return; }
-  HOST_KEY = v; localStorage.setItem("HOST_KEY", HOST_KEY);
-  alert("Saved.");
+qs("#btnPlay").onclick = async()=>{
+  const s = await (await fetch('/api/state')).json();
+  const cid = s.current && s.current.id;
+  const prog = s.progress || {};
+  if (cid){
+    currentId = cid;
+    const seek = Math.max(0, Math.floor((prog.pos||0)));
+    if (player) player.loadVideoById({videoId: cid, startSeconds: seek, suggestedQuality: 'large'});
+    await post('/api/play', {videoId: cid, pos: seek});
+  } else {
+    await post('/api/play', {});
+  }
+  await refresh(true);
 };
-qs("#btnPlay").onclick = async()=>{ await post('/api/play', {}); await refresh(); };
-qs("#btnNext").onclick = async()=>{ await post('/api/next', {}); await refresh(); };
-qs("#btnPrev").onclick = async()=>{ await post('/api/prev', {}); await refresh(); };
-qs("#btnClear").onclick = async()=>{ await post('/api/clear', {}); await refresh(); };
-qs("#btnReload").onclick = refresh;
+qs("#btnNext").onclick = async()=>{ await post('/api/next', {}); await refresh(true); };
+qs("#btnPrev").onclick = async()=>{ await post('/api/prev', {}); await refresh(true); };
+qs("#btnClear").onclick = async()=>{ await post('/api/clear', {}); await refresh(true); };
+
+["#rate","#nickHours"].forEach(sel=>{
+  const el = qs(sel);
+  el.addEventListener('focus', ()=> pauseRefresh = true);
+  el.addEventListener('blur', ()=> { pauseRefresh = false; });
+});
+
+qs("#btnSaveCfg").onclick = async()=>{
+  const v  = parseInt(qs("#rate").value||"180", 10);
+  const nh = parseInt(qs("#nickHours").value||"24", 10);
+  const r = await fetch('/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({rate_limit_s: v, nick_change_hours: nh})});
+  if (!r.ok){ alert("Not authorized or error"); return; }
+  await refresh(true);
+};
+
 qs("#btnLogo").onclick = async()=>{
   const f = qs("#logo").files[0];
   if(!f){ alert("Choose file"); return; }
   const fd = new FormData(); fd.append("logo", f);
-  const r = await fetch('/api/logo', {method:'POST', headers: HOST_KEY? {"X-Host-Key": HOST_KEY} : {}, body: fd});
-  if (r.status===401){ alert("Wrong HOST_API_KEY"); return; }
-  alert("Logo uploaded"); setTimeout(()=>location.reload(), 500);
+  const r = await fetch('/api/logo', {method:'POST', body: fd});
+  if (!r.ok){ alert("Not authorized or error"); return; }
+  alert("Logo uploaded"); setTimeout(()=>location.reload(), 400);
 };
-qs("#btnSaveCfg").onclick = async()=>{
-  const v  = parseInt(qs("#rate").value||"180", 10);
-  const nh = parseInt(qs("#nickHours").value||"24", 10);
-  const r = await fetch('/api/config', {method:'POST', headers: headersAuth(), body: JSON.stringify({rate_limit_s: v, nick_change_hours: nh})});
-  if (r.status===401){ alert("Wrong HOST_API_KEY"); return; }
-  alert("Saved."); refresh();
+
+qs("#btnSaveAuth").onclick = async()=>{
+  const u = qs("#hostUser").value.trim();
+  const p = qs("#hostPass").value.trim();
+  const k = qs("#hostKey").value.trim();
+  if (!k){ alert("Enter HOST_API_KEY to confirm."); return; }
+  const r = await fetch('/api/admin/update_auth', {method:'POST', headers:{'Content-Type':'application/json','X-Host-Key':k}, body: JSON.stringify({username:u, password:p})});
+  const d = await r.json().catch(()=>({}));
+  if (!r.ok){ alert(d.error||"Unauthorized"); return; }
+  alert("Saved. You can now login with new credentials.");
 };
+
 queueEl.addEventListener('click', async (e)=>{
   if (e.target.tagName === "BUTTON" && e.target.dataset.id){
-    await post('/api/remove', {id: e.target.dataset.id}); refresh();
+    await fetch('/api/remove', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id:e.target.dataset.id})});
+    await refresh(true);
   }
 });
 
-// bootstrap + auto refresh
 if (window.YT && window.YT.Player){ window.onYouTubeIframeAPIReady(); }
-refresh();
-setInterval(refresh, 2000);
+refresh(true);
+setInterval(()=>{ if(!pauseRefresh) refresh(false); }, 2000);

@@ -4,17 +4,13 @@ const playing = document.getElementById('playing');
 const pbar = document.getElementById('pbar');
 const msgEl = document.getElementById('msg');
 
-function who(it){
-  const name = it.by_name || '';
-  const ip   = it.by_ip || '';
-  return name ? `${name} (${ip})` : ip;
-}
+function whoUser(it){ return it.by_name || 'Guest'; }
 function rowQueue(it, idx){
   return `<div class="item">
     <img class="thumb" src="https://i.ytimg.com/vi/${it.id}/default.jpg">
     <div class="flex-1">
       <div class="font-medium">${it.title||it.id}</div>
-      <div class="small">#${idx+1} • by ${who(it)}</div>
+      <div class="small">#${idx+1} • by ${whoUser(it)}</div>
     </div>
   </div>`;
 }
@@ -23,7 +19,7 @@ function rowHistory(it){
     <img class="thumb" src="https://i.ytimg.com/vi/${it.id}/default.jpg">
     <div class="flex-1">
       <div class="text-sm">${it.title||it.id}</div>
-      <div class="small">by ${who(it)}</div>
+      <div class="small">by ${whoUser(it)}</div>
     </div>
   </div>`;
 }
@@ -38,20 +34,27 @@ function renderState(s){
   qEl.innerHTML = (s.queue||[]).map((it,i)=>rowQueue(it,i)).join("") || '<div class="small">Empty</div>';
   hEl.innerHTML = (s.history||[]).slice(0,15).map(rowHistory).join("") || '<div class="small">No history</div>';
 }
-async function load(){
-  const s = await (await fetch('/api/state')).json();
-  renderState(s);
+
+async function ensureNickname(){
+  const input = document.getElementById('nickname');
+  const nameLocal = (localStorage.getItem('ytq_name')||'').trim();
+  if (nameLocal){ input.value = nameLocal; return nameLocal; }
+  try{
+    const s = await (await fetch('/api/name')).json();
+    if (s && s.name){ localStorage.setItem('ytq_name', s.name); input.value = s.name; return s.name; }
+  }catch{}
+  return '';
 }
+
 document.getElementById('addForm').addEventListener('submit', async (e)=>{
   e.preventDefault();
   const url = document.getElementById('url').value.trim();
+  const name = (document.getElementById('nickname').value||'').trim();
+  if (!name){ alert('Vui lòng đặt nickname trước khi gửi bài.'); return; }
+  localStorage.setItem('ytq_name', name);
   msgEl.textContent = 'Submitting...';
   try{
-    const r = await fetch('/api/add',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({url, name: (localStorage.getItem('ytq_name')||'').trim()})
-    });
+    const r = await fetch('/api/add',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({url, name}) });
     const d = await r.json();
     if(!r.ok) throw new Error(d.error||'Error');
     msgEl.textContent = 'Added: ' + (d.item.title||d.item.id);
@@ -60,15 +63,6 @@ document.getElementById('addForm').addEventListener('submit', async (e)=>{
   }catch(err){ msgEl.textContent = 'Error: ' + err.message; }
 });
 
-async function initName(){
-  try{
-    const s = await (await fetch('/api/name')).json();
-    if(!localStorage.getItem('ytq_name') && s.name){
-      localStorage.setItem('ytq_name', s.name);
-    }
-    document.getElementById('nickname').value = localStorage.getItem('ytq_name') || s.name || '';
-  }catch{}
-}
 document.getElementById('saveName').onclick = async ()=>{
   const name = document.getElementById('nickname').value.trim();
   const out = document.getElementById('nameMsg');
@@ -82,6 +76,9 @@ document.getElementById('saveName').onclick = async ()=>{
   }catch(e){ out.textContent = e.message; }
 };
 
+async function load(){
+  const s = await (await fetch('/api/state')).json();
+  renderState(s);
+}
 setInterval(load, 2000);
-initName();
-load();
+ensureNickname().then(load);
