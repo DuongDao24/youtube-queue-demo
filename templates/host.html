@@ -1,4 +1,3 @@
-
 <!doctype html>
 <html>
 <head>
@@ -10,10 +9,10 @@
   <script src="https://www.youtube.com/iframe_api"></script>
 </head>
 <body class="bg-gray-50 text-gray-900">
-  <div class="max-w-7xl mx-auto p-6 space-y-6">
+  <div class="max-w-6xl mx-auto p-6 space-y-6">
     <div class="flex items-center gap-4">
       {% if logo_url %}<img src="{{ logo_url }}" class="h-10 w-auto rounded-md shadow-sm" alt="logo">{% endif %}
-      <h1 class="text-3xl font-bold">{{ app_title }} — Host</h1>
+      <h1 class="text-2xl font-bold">{{ app_title }} — Host</h1>
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -52,6 +51,10 @@
             <div>
               <label class="text-sm text-gray-600">Submit limit (seconds)</label>
               <input id="rate" type="number" min="10" step="10" class="border rounded-xl px-3 py-2 w-48">
+            </div>
+            <div>
+              <label class="text-sm text-gray-600">Nickname change (hours)</label>
+              <input id="nickHours" type="number" min="1" step="1" class="border rounded-xl px-3 py-2 w-48">
             </div>
             <div>
               <label class="text-sm text-gray-600">Logo (png/jpg/gif)</label>

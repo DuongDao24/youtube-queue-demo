@@ -1,4 +1,3 @@
-
 let HOST_KEY = localStorage.getItem("HOST_KEY") || "";
 const qs = (s)=>document.querySelector(s);
 const queueEl = qs("#queue");
@@ -11,18 +10,26 @@ let tickTimer = null;
 function headersAuth(){
   return HOST_KEY ? {"Content-Type":"application/json","X-Host-Key":HOST_KEY} : {"Content-Type":"application/json"};
 }
-
+function who(it){
+  return (it.by_name ? `${it.by_name} (${it.by_ip||''})` : (it.by_ip||'')); 
+}
 function rQueue(it){
   return `<div class="item">
     <img class="thumb" src="https://i.ytimg.com/vi/${it.id}/default.jpg">
-    <div class="flex-1">${it.title||it.id}</div>
+    <div class="flex-1">
+      <div>${it.title||it.id}</div>
+      <div class="small">by ${who(it)}</div>
+    </div>
     <button class="btn" data-id="${it.id}">Remove</button>
   </div>`;
 }
 function rHistory(it){
   return `<div class="item">
     <img class="thumb" src="https://i.ytimg.com/vi/${it.id}/default.jpg">
-    <div class="text-sm">${it.title||it.id}</div>
+    <div>
+      <div class="text-sm">${it.title||it.id}</div>
+      <div class="small">by ${who(it)}</div>
+    </div>
   </div>`;
 }
 
@@ -33,30 +40,27 @@ window.onYouTubeIframeAPIReady = function(){
     events: { 'onReady': onPlayerReady, 'onStateChange': onPlayerStateChange }
   });
 }
-
 function onPlayerReady(){
   refresh();
   if (tickTimer) clearInterval(tickTimer);
   tickTimer = setInterval(sendProgressTick, 1000);
 }
-
 function onPlayerStateChange(e){
   if (e.data === YT.PlayerState.ENDED){
     post('/api/progress', {ended:true, videoId: currentId, pos: player.getDuration(), dur: player.getDuration()})
       .then(()=> setTimeout(refresh, 800));
   }
 }
-
 async function post(path, body){
   const r = await fetch(path, {method:'POST', headers: headersAuth(), body: JSON.stringify(body||{})});
   return r.json().catch(()=>({}));
 }
-
 async function refresh(){
   const s = await (await fetch('/api/state')).json();
   queueEl.innerHTML = (s.queue||[]).map(rQueue).join("") || '<div class="small">Queue empty</div>';
   historyEl.innerHTML = (s.history||[]).slice(0,15).map(rHistory).join("") || '<div class="small">No history</div>';
   qs("#rate").value = (s.config && s.config.rate_limit_s) || 180;
+  qs("#nickHours").value = (s.config && s.config.nick_change_hours) || 24;
 
   const cid = s.current && s.current.id;
   if (cid && cid !== currentId && player){
@@ -64,7 +68,6 @@ async function refresh(){
     player.loadVideoById({videoId: cid, startSeconds: 0, suggestedQuality: 'large'});
   }
 }
-
 async function sendProgressTick(){
   if (!player || !HOST_KEY) return;
   try{
@@ -95,6 +98,7 @@ qs("#btnPlay").onclick = async()=>{ await post('/api/play', {}); await refresh()
 qs("#btnNext").onclick = async()=>{ await post('/api/next', {}); await refresh(); };
 qs("#btnPrev").onclick = async()=>{ await post('/api/prev', {}); await refresh(); };
 qs("#btnClear").onclick = async()=>{ await post('/api/clear', {}); await refresh(); };
+qs("#btnReload").onclick = refresh;
 qs("#btnLogo").onclick = async()=>{
   const f = qs("#logo").files[0];
   if(!f){ alert("Choose file"); return; }
@@ -104,8 +108,9 @@ qs("#btnLogo").onclick = async()=>{
   alert("Logo uploaded"); setTimeout(()=>location.reload(), 500);
 };
 qs("#btnSaveCfg").onclick = async()=>{
-  const v = parseInt(qs("#rate").value||"180", 10);
-  const r = await fetch('/api/config', {method:'POST', headers: headersAuth(), body: JSON.stringify({rate_limit_s: v})});
+  const v  = parseInt(qs("#rate").value||"180", 10);
+  const nh = parseInt(qs("#nickHours").value||"24", 10);
+  const r = await fetch('/api/config', {method:'POST', headers: headersAuth(), body: JSON.stringify({rate_limit_s: v, nick_change_hours: nh})});
   if (r.status===401){ alert("Wrong HOST_API_KEY"); return; }
   alert("Saved."); refresh();
 };
@@ -115,12 +120,7 @@ queueEl.addEventListener('click', async (e)=>{
   }
 });
 
-// bootstrap: if API is already loaded
+// bootstrap + auto refresh
 if (window.YT && window.YT.Player){ window.onYouTubeIframeAPIReady(); }
-
-// Auto refresh queue/now-playing every 2s so host sees new user submissions
-refresh();                    // load ngay khi mở trang
-setInterval(refresh, 2000);   // poll mỗi 2 giây
-
-qs("#btnReload").onclick = refresh;
-
+refresh();
+setInterval(refresh, 2000);
