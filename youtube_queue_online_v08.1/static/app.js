@@ -1,0 +1,15 @@
+const qEl=document.getElementById('queue'),hEl=document.getElementById('history'),playing=document.getElementById('playing'),pbar=document.getElementById('pbar'),msgEl=document.getElementById('msg');function who(e){const t=e.by_name||"",n=e.by_ip||"";return t?`${t} (${n})`:n}function rowQueue(e,t){return`<div class="item">
+    <img class="thumb" src="https://i.ytimg.com/vi/${e.id}/default.jpg">
+    <div class="flex-1">
+      <div class="font-medium">${e.title||e.id}</div>
+      <div class="small">#${t+1} • by ${who(e)}</div>
+    </div>
+  </div>`}function rowHistory(e){return`<div class="item">
+    <img class="thumb" src="https://i.ytimg.com/vi/${e.id}/default.jpg">
+    <div class="flex-1">
+      <div class="text-sm">${e.title||e.id}</div>
+      <div class="small">by ${who(e)}</div>
+    </div>
+  </div>`}function renderState(e){document.getElementById('limit').textContent=e.config&&e.config.rate_limit_s||180,playing.innerHTML=e.current?`<img class="thumb" src="https://i.ytimg.com/vi/${e.current.id}/hqdefault.jpg">
+      <div><div class="font-semibold">${e.current.title||e.current.id}</div>
+      <a class="text-blue-600 text-sm" target="_blank" href="https://www.youtube.com/watch?v=${e.current.id}">Open on YouTube</a></div>`:'<div class="small">No current.</div>';const t=e.progress||{},n=t.pos||0,i=t.dur||0;pbar.style.width=i>0?Math.min(100,Math.round(100*n/i))+'%':'0%',qEl.innerHTML=(e.queue||[]).map(((e,t)=>rowQueue(e,t))).join("")||'<div class="small">Empty</div>',hEl.innerHTML=(e.history||[]).slice(0,15).map(rowHistory).join("")||'<div class="small">No history</div>'}async function load(){const e=await(await fetch('/api/state')).json();renderState(e)}document.getElementById('addForm').addEventListener('submit',async e=>{e.preventDefault();const t=document.getElementById('url').value.trim();msgEl.textContent='Submitting...';try{const e=await fetch('/api/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:t,name:(localStorage.getItem('ytq_name')||'').trim()})}),n=await e.json();if(!e.ok)throw new Error(n.error||'Error');msgEl.textContent='Added: '+(n.item.title||n.item.id),document.getElementById('url').value='',load()}catch(e){msgEl.textContent='Error: '+e.message}});async function initName(){try{const e=await(await fetch('/api/name')).json();!localStorage.getItem('ytq_name')&&e.name&&localStorage.setItem('ytq_name',e.name),document.getElementById('nickname').value=localStorage.getItem('ytq_name')||e.name||''}catch{}}document.getElementById('saveName').onclick=async()=>{const e=document.getElementById('nickname').value.trim(),t=document.getElementById('nameMsg');t.textContent='Saving...';try{const n=await fetch('/api/name',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:e})}),a=await n.json();if(!n.ok)throw new Error(a.error||'Error');localStorage.setItem('ytq_name',a.name),t.textContent='Saved'}catch(e){t.textContent=e.message}},setInterval(load,2e3),initName(),load()
