@@ -331,9 +331,9 @@ def api_progress():
     ts    = time.time()
     last_progress = {"videoId": vid, "pos": pos, "dur": dur, "ts": ts, "ended": ended}
     if ended:
-        if current: history.appendleft(current)
-        current = queue.popleft() if queue else None
-        last_progress["ended"] = False
+    if current: history.appendleft(current)
+    current = queue.popleft() if queue else None
+    last_progress = {"videoId": current["id"] if current else None, "pos": 0, "dur": 0, "ts": time.time(), "ended": False}
     save_state()
     return jsonify({"ok": True})
 
