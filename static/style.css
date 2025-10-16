@@ -32,3 +32,53 @@ input:read-only{background:#f5f6fa}
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center}
 .dlg{width:360px;background:#fff;border-radius:12px;padding:16px;border:1px solid #e9edf2;box-shadow:0 10px 30px rgba(2,6,23,.15)}
 #lmsg{color:#ef4444}
+
+#host-login-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.host-login-modal {
+  background: white;
+  padding: 25px 35px;
+  border-radius: 10px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+  text-align: center;
+  width: 320px;
+}
+
+.host-login-modal h3 {
+  margin-bottom: 15px;
+  font-size: 1.2rem;
+}
+
+.host-login-modal input {
+  display: block;
+  width: 100%;
+  margin: 8px 0;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid #ccc;
+}
+
+.host-login-modal button {
+  background: #2563eb;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.host-login-modal button:hover {
+  background: #1d4ed8;
+}
