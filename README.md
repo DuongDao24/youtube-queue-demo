@@ -1,19 +1,23 @@
-# YouTube Queue Online — v08.2 (Root Ready, Render-ready)
+# YouTube Queue Online — v08.3 (Final, Render-ready)
 
-**New in v08.2**
-- Host login (Admin/0000) with session, changeable via HOST_API_KEY
-- Resume video after host reload (seek to last progress)
-- Countdown 10 seconds before auto-next
-- Settings input fix (no more reset while typing)
-- Nickname required to submit
-- Hide user IP on / (user), still visible on /host
-- Removed Reload button
+- User page: submit YT link (not playlist), nickname required (cached in browser).
+- Host page: protected login popup (default credentials: **Admin / 0000**). Defaults are **not shown** in UI.
+- Controls: **Pause/Resume** (center), **Prev**, **Next**, **Clear**.
+- Settings: **Submit limit (seconds)**, **Nickname change (hours)**. Save reliably; fields won't jump back.
+- Upload logo (png/jpg/gif).
+- Auto-next with **10s** countdown; resume playing after host refresh.
+- Queue/History and "Now playing" sync to user page every 2s.
 
-**Endpoints**
-- `/` user page
-- `/host` host page (login required)
+## Deploy
+1) Create a new Render Web Service from this repo (Python).  
+2) Keep defaults or use `render.yaml`.  
+3) Environment (optional):
+   - `HOST_API_KEY` (string) – required to change host username/password.
+   - `APP_TITLE` (string) – title on pages.
 
-**Deploy to Render**
-- Build: `pip install -r requirements.txt`
-- Start: `gunicorn -w 1 -k gevent -b 0.0.0.0:$PORT app:app`
-- Env: `APP_TITLE`, `HOST_API_KEY`, `RATE_LIMIT_S`, `PYTHON_VERSION=3.11.9`
+## Endpoints
+- `/` – User page
+- `/host` – Host dashboard (login popup)
+- `/api/*` – JSON APIs
+
+> Tip: if you change default admin credentials inside Host settings, you must provide the correct `HOST_API_KEY` to confirm the change.

@@ -1,133 +1,170 @@
-import os, time, re, base64
-from flask import Flask, request, jsonify, render_template, session, send_file, abort
-from io import BytesIO
+import os, time, re, secrets
+from flask import Flask, request, jsonify, render_template
 
 APP_TITLE = os.getenv("APP_TITLE", "YouTube Queue Online")
-HOST_API_KEY = os.getenv("HOST_API_KEY", "ytq-premium-2025-dxd")
-RATE_LIMIT_S = int(os.getenv("RATE_LIMIT_S", "180"))
-SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
+HOST_API_KEY = os.getenv("HOST_API_KEY", "")
 
 app = Flask(__name__)
-app.secret_key = SECRET_KEY
+app.config['SECRET_KEY'] = os.getenv("SECRET_KEY","dev-secret")
 
-YT = re.compile(r"(youtube\.com/watch\?v=|youtu\.be/)([A-Za-z0-9_-]{6,})")
-now = lambda: int(time.time())
+YOUTUBE_RE = re.compile(r'(?:v=|youtu\.be/|embed/)([A-Za-z0-9_-]{11})')
 
 STATE = {
-  "queue": [], "history": [], "current": None,
-  "progress": {"pos":0,"dur":0},
-  "settings":{"rate_limit": RATE_LIMIT_S, "nick_hours":24},
-  "nicknames":{}, "last_submit":{},
-  "logo_b64": None,
-  "host_auth":{"username":"Admin","password":"0000"}
+    "queue": [],         # list of {vid,title,nick,ip}
+    "history": [],       # last 20
+    "current": None,     # {vid,title,nick,ip,pos,start_ts,playing}
+    "rate_limit_s": 60,
+    "nick_change_h": 24,
+    "ip_last_submit": {},    # ip -> ts
+    "nick_last_change": {},  # ip -> ts
+    "host_user": "Admin",
+    "host_pass": "0000",
+    "host_tokens": set(),
 }
 
-def is_host(): return bool(session.get("host_ok"))
-def require_host():
-  if not is_host(): abort(401)
-def vid(url):
-  m = YT.search(url or ""); return m.group(2) if m else None
+def extract_vid(url):
+    m = YOUTUBE_RE.search(url)
+    return m.group(1) if m else None
+
+def now(): return time.time()
+
+def can_submit(ip):
+    last = STATE["ip_last_submit"].get(ip, 0)
+    return (now() - last) >= STATE["rate_limit_s"]
+
+def can_change_nick(ip):
+    last = STATE["nick_last_change"].get(ip, 0)
+    return (now() - last) >= STATE["nick_change_h"]*3600
+
+def set_current_from_queue():
+    if STATE["queue"]:
+        item = STATE["queue"].pop(0)
+        STATE["current"] = {
+            **item,
+            "pos": 0.0,
+            "start_ts": now(),
+            "playing": True,
+        }
+        STATE["history"] = STATE["history"][:20]
+        return True
+    STATE["current"] = None
+    return False
 
 @app.get("/")
-def index(): return render_template("index.html", app_title=APP_TITLE, logo_url=("/logo" if STATE["logo_b64"] else None))
+def page_user():
+    return render_template("index.html", app_title=APP_TITLE)
+
 @app.get("/host")
-def host(): return render_template("host.html", app_title=APP_TITLE, logo_url=("/logo" if STATE["logo_b64"] else None))
-
-@app.get("/logo")
-def logo():
-  if not STATE["logo_b64"]: abort(404)
-  return send_file(BytesIO(base64.b64decode(STATE["logo_b64"])), mimetype="image/png")
-
-@app.post("/api/login")
-def login():
-  d=request.get_json(silent=True) or {}; u=d.get("username",""); p=d.get("password","")
-  if u==STATE["host_auth"]["username"] and p==STATE["host_auth"]["password"]:
-    session["host_ok"]=True; return jsonify(ok=True)
-  return jsonify(ok=False,error="Not authorized"),401
-
-@app.post("/api/logout")
-def logout(): session.clear(); return jsonify(ok=True)
-
-@app.get("/api/check_host")
-def check_host(): return jsonify(ok=is_host())
+def page_host():
+    return render_template("host.html", app_title=APP_TITLE)
 
 @app.get("/api/state")
-def state():
-  ip=request.headers.get("X-Forwarded-For", request.remote_addr) or "0.0.0.0"
-  rl=STATE["settings"]["rate_limit"]; last=STATE["last_submit"].get(ip,0)
-  remain=max(0, rl-(now()-last)) if last else 0
-  return jsonify(queue=STATE["queue"], history=STATE["history"], current=STATE["current"], progress=STATE["progress"], settings=STATE["settings"], rate_remaining=remain)
+def api_state():
+    cur = STATE["current"]
+    # update computed progress
+    if cur and cur.get("playing"):
+        elapsed = now() - cur.get("start_ts", now())
+        cur["pos"] = max(cur.get("pos",0.0), elapsed)
+    q = [dict(vid=i["vid"], title=i.get("title"), nick=i.get("nick")) for i in STATE["queue"]]
+    h = [dict(vid=i["vid"], title=i.get("title"), nick=i.get("nick")) for i in STATE["history"]]
+    resp = {
+        "queue": q,
+        "history": h,
+        "current": dict(cur) if cur else None,
+        "rate_limit_s": STATE["rate_limit_s"],
+        "nick_change_h": STATE["nick_change_h"],
+    }
+    # inject progress pct (fake 3m if unknown)
+    if resp["current"]:
+        dur = resp["current"].get("dur") or 180
+        pct = int(100*float(resp["current"].get("pos",0.0))/float(dur))
+        resp["current"]["progress_pct"] = max(0, min(100, pct))
+    return jsonify(resp)
 
-@app.post("/api/submit")
-def submit():
-  d=request.get_json(silent=True) or {}; url=(d.get("url") or "").strip(); name=(d.get("nickname") or "").strip()
-  if not url or not name: return jsonify(ok=False,error="Nickname and URL are required."),400
-  if "youtu" not in url: return jsonify(ok=False,error="Please submit a valid YouTube link."),400
-  v=vid(url); 
-  if not v: return jsonify(ok=False,error="Invalid YouTube URL."),400
-  ip=request.headers.get("X-Forwarded-For", request.remote_addr) or "0.0.0.0"
-  rl=STATE["settings"]["rate_limit"]; last=STATE["last_submit"].get(ip,0)
-  if last and now()-last<rl: return jsonify(ok=False,error=f"Please wait {rl-(now()-last)}s before next submit."),429
-  if ip not in STATE["nicknames"]: STATE["nicknames"][ip]={"name":name,"changed_at":now()}
-  item={"id":f"{now()}_{len(STATE['queue'])+1}","url":url,"vid":v,"title":url,"by":STATE["nicknames"][ip]["name"],"at":now()}
-  STATE["queue"].append(item); STATE["last_submit"][ip]=now()
-  if STATE["current"] is None:
-    STATE["current"]=STATE["queue"].pop(0); STATE["progress"]={"pos":0,"dur":0}
-  return jsonify(ok=True,item=item)
+@app.post("/api/enqueue")
+def api_enqueue():
+    data = request.get_json(force=True, silent=True) or {}
+    url = (data.get("url") or "").strip()
+    nick = (data.get("nickname") or "").strip() or "anonymous"
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr) or "unknown"
+    if not can_submit(ip):
+        return jsonify({"ok": False, "error": f"Please wait {STATE['rate_limit_s']}s between submits."})
+    vid = extract_vid(url)
+    if not vid:
+        return jsonify({"ok": False, "error":"Invalid YouTube URL."})
+    item = {"vid": vid, "title": None, "nick": nick, "ip": ip}
+    if STATE["current"] is None:
+        STATE["queue"].append(item)
+        set_current_from_queue()
+    else:
+        STATE["queue"].append(item)
+    STATE["ip_last_submit"][ip] = now()
+    return jsonify({"ok": True})
 
-@app.post("/api/progress")
-def progress():
-  require_host()
-  d=request.get_json(silent=True) or {}; pos=float(d.get("pos") or 0); dur=float(d.get("dur") or 0)
-  STATE["progress"]={"pos":max(0,pos),"dur":max(0,dur)}; return jsonify(ok=True)
+def require_host(f):
+    def wrap(*a, **k):
+        token = request.headers.get("X-Host-Token","")
+        if token not in STATE["host_tokens"]:
+            return jsonify({"ok": False, "error":"Not authorized"})
+        return f(*a, **k)
+    wrap.__name__ = f.__name__
+    return wrap
+
+@app.post("/api/host/login")
+def api_host_login():
+    data = request.get_json(force=True, silent=True) or {}
+    user = (data.get("user") or "").strip()
+    pw = (data.get("pass") or "")
+    if user == STATE["host_user"] and pw == STATE["host_pass"]:
+        token = secrets.token_urlsafe(18)
+        STATE["host_tokens"].add(token)
+        return jsonify({"ok": True, "token": token})
+    return jsonify({"ok": False, "error":"Wrong username/password"})
+
+@app.post("/api/toggle")
+@require_host
+def api_toggle():
+    cur = STATE["current"]
+    if not cur:
+        set_current_from_queue()
+        return jsonify({"ok": True})
+    cur["playing"] = not cur.get("playing", True)
+    if cur["playing"]:
+        # resume: shift start_ts so elapsed continues
+        cur["start_ts"] = now() - cur.get("pos",0.0)
+    return jsonify({"ok": True})
 
 @app.post("/api/next")
-def nxt():
-  require_host()
-  if STATE["current"]: STATE["history"].insert(0,STATE["current"])
-  STATE["current"]=STATE["queue"].pop(0) if STATE["queue"] else None
-  STATE["progress"]={"pos":0,"dur":0}; return jsonify(ok=True,current=STATE["current"])
+@require_host
+def api_next():
+    # push current to history
+    if STATE["current"]:
+        STATE["history"].insert(0, STATE["current"])
+        STATE["history"] = STATE["history"][:20]
+    set_current_from_queue()
+    return jsonify({"ok": True})
 
 @app.post("/api/prev")
-def prev():
-  require_host()
-  if STATE["history"]:
-    prev=STATE["history"].pop(0)
-    if STATE["current"]: STATE["queue"].insert(0,STATE["current"])
-    STATE["current"]=prev; STATE["progress"]={"pos":0,"dur":0}
-  return jsonify(ok=True,current=STATE["current"])
+@require_host
+def api_prev():
+    # not keeping prev buffer; no-op
+    return jsonify({"ok": False, "error":"Prev not available in this build"})
 
 @app.post("/api/clear")
-def clear(): require_host(); STATE["queue"].clear(); return jsonify(ok=True)
+@require_host
+def api_clear():
+    STATE["queue"].clear()
+    return jsonify({"ok": True})
 
-@app.post("/api/save_settings")
-def save_settings():
-  require_host(); d=request.get_json(silent=True) or {}
-  try:
-    rl=int(d.get("rate_limit")); nh=int(d.get("nick_hours"))
-    if rl<0 or nh<1: raise ValueError
-    STATE["settings"]["rate_limit"]=rl; STATE["settings"]["nick_hours"]=nh
-    return jsonify(ok=True,settings=STATE["settings"])
-  except: return jsonify(ok=False,error="Invalid settings"),400
+@app.post("/api/settings")
+@require_host
+def api_settings():
+    data = request.get_json(force=True, silent=True) or {}
+    rate = int(data.get("rate_limit_s", STATE["rate_limit_s"]))
+    nickh = int(data.get("nick_change_h", STATE["nick_change_h"]))
+    STATE["rate_limit_s"] = max(5, rate)
+    STATE["nick_change_h"] = max(1, nickh)
+    return jsonify({"ok": True})
 
-@app.post("/api/host_auth")
-def host_auth():
-  d=request.get_json(silent=True) or {}
-  key=(d.get("host_api_key") or "").strip()
-  if key!=HOST_API_KEY: return jsonify(ok=False,error="Invalid HOST_API_KEY"),403
-  u=(d.get("username") or "").strip(); p=(d.get("password") or "").strip()
-  if not u or not p: return jsonify(ok=False,error="Missing username/password"),400
-  STATE["host_auth"]={"username":u,"password":p}; return jsonify(ok=True)
-
-@app.post("/api/upload_logo")
-def upload_logo():
-  require_host()
-  if "file" not in request.files: return jsonify(ok=False,error="No file"),400
-  data=request.files["file"].read(); STATE["logo_b64"]=base64.b64encode(data).decode("ascii")
-  return jsonify(ok=True)
-
-@app.get("/healthz")
-def healthz(): return "ok"
-
-if __name__=="__main__":
-  app.run(host="0.0.0.0", port=5000, debug=True)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
