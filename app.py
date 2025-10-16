@@ -1,5 +1,5 @@
 import os, time, re
-from datetime import datetime, timedelta
+from datetime import datetime
 from flask import Flask, request, jsonify, render_template, session
 
 # ---------------------------
@@ -9,7 +9,7 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("APP_SECRET", "ytq-secret-2025")
 
 APP_TITLE = os.environ.get("APP_TITLE", "YouTube Queue Online")
-HOST_API_KEY = os.environ.get("HOST_API_KEY", "ytq-premium-2025-dxd")  # dùng khi đổi user/pass
+HOST_API_KEY = os.environ.get("HOST_API_KEY", "ytq-premium-2025-dxd")
 DEFAULT_HOST_USER = os.environ.get("HOST_USER", "Admin")
 DEFAULT_HOST_PASS = os.environ.get("HOST_PASS", "0000")
 
@@ -26,13 +26,15 @@ settings = {
     "host_pass": DEFAULT_HOST_PASS,
 }
 
-# last submit time per IP (rate limit)
+# track last submit + nickname cache
 last_submit = {}      # {ip: epoch_sec}
-# nickname cache per ip with TTL
 nick_cache = {}       # {ip: {"name": "XD", "until": epoch_sec}}
 
 YOUTUBE_RE = re.compile(r"(youtu\.be/|youtube\.com/watch\?v=)")
 
+# ---------------------------
+# Helpers
+# ---------------------------
 def client_ip():
     return request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
 
@@ -40,7 +42,8 @@ def now():
     return int(time.time())
 
 def valid_youtube_url(url: str) -> bool:
-    if not url: return False
+    if not url:
+        return False
     return bool(YOUTUBE_RE.search(url))
 
 # ---------------------------
@@ -55,12 +58,11 @@ def page_host():
     return render_template("host.html", app_title=APP_TITLE, settings=settings, is_host=bool(session.get("host_ok")))
 
 # ---------------------------
-# APIs: state
+# APIs: get state
 # ---------------------------
 @app.get("/api/state")
 def api_state():
     ip = client_ip()
-    # resolve nickname
     nick = ""
     if ip in nick_cache and nick_cache[ip]["until"] > now():
         nick = nick_cache[ip]["name"]
@@ -70,13 +72,13 @@ def api_state():
         "app_title": APP_TITLE,
         "settings": settings,
         "queue": queue,
-        "history": history[-20:][::-1],  # show latest first
+        "history": history[-20:][::-1],
         "current": current,
         "me": {"ip": ip, "nickname": nick},
     })
 
 # ---------------------------
-# APIs: user nickname
+# APIs: set nickname
 # ---------------------------
 @app.post("/api/nick")
 def api_nick():
@@ -84,12 +86,9 @@ def api_nick():
     name = (data.get("name") or "").strip()
     if not name:
         return jsonify({"ok": False, "error": "Nickname required."}), 400
-    ip = client_ip()
 
-    # enforce change window
-    # nếu đã có nickname và chưa qua hạn thì không cho đổi
+    ip = client_ip()
     if ip in nick_cache and nick_cache[ip]["until"] > now():
-        # cho phép set lần đầu nếu chưa có
         if nick_cache[ip]["name"]:
             return jsonify({"ok": False, "error": "You can change nickname later."}), 429
 
@@ -102,6 +101,7 @@ def api_nick():
 # ---------------------------
 @app.post("/api/add")
 def api_add():
+    global current  # 🔧 moved up to avoid SyntaxError
     data = request.get_json(silent=True) or {}
     url = (data.get("url") or "").strip()
 
@@ -109,7 +109,6 @@ def api_add():
         return jsonify({"ok": False, "error": "Invalid YouTube URL."}), 400
 
     ip = client_ip()
-    # rate limit
     last = last_submit.get(ip, 0)
     if now() - last < settings["rate_limit_s"]:
         return jsonify({"ok": False, "error": "Please wait before submitting again."}), 429
@@ -128,7 +127,6 @@ def api_add():
     queue.append(item)
 
     # auto start if nothing playing
-    global current
     if current is None:
         current = {"url": url, "started_at": now(), "progress_sec": 0}
         queue.pop(0)
@@ -154,31 +152,24 @@ def api_host_logout():
     return jsonify({"ok": True})
 
 def require_host():
-    if not session.get("host_ok"):
-        return False
-    return True
+    return bool(session.get("host_ok"))
 
 # ---------------------------
 # Host controls
 # ---------------------------
 @app.post("/api/host/next")
 def api_host_next():
+    global current
     if not require_host():
         return jsonify({"ok": False, "error": "Not authorized"}), 401
-    global current
+
     if queue:
-        # đưa current vào history
         if current:
-            history.append({
-                "url": current["url"],
-                "by_ip": "",
-                "by_name": "",
-                "ts": now(),
-            })
+            history.append({"url": current["url"], "by_ip": "", "by_name": "", "ts": now()})
         nxt = queue.pop(0)
         current = {"url": nxt["url"], "started_at": now(), "progress_sec": 0}
         return jsonify({"ok": True, "current": current, "queue_len": len(queue)})
-    # nếu hết queue thì kết thúc
+
     if current:
         history.append({"url": current["url"], "by_ip": "", "by_name": "", "ts": now()})
     current = None
@@ -186,9 +177,9 @@ def api_host_next():
 
 @app.post("/api/host/prev")
 def api_host_prev():
+    global current
     if not require_host():
         return jsonify({"ok": False, "error": "Not authorized"}), 401
-    global current
     if history:
         prev = history.pop()
         if current:
@@ -204,30 +195,30 @@ def api_host_clear():
     queue.clear()
     return jsonify({"ok": True})
 
-# nhận progress từ host (iframe) – nếu host báo “ended” thì auto next
+# ---------------------------
+# Video progress + auto next
+# ---------------------------
 @app.post("/api/progress")
 def api_progress():
+    global current  # 🔧 moved up to avoid SyntaxError
     data = request.get_json(silent=True) or {}
-    status = data.get("status")  # playing / ended / paused
-    # cập nhật cũng được nếu muốn sync progress
+    status = data.get("status")
+
     if status == "ended":
-        # giả lập next
         if queue:
             nxt = queue.pop(0)
-            global current
             if current:
                 history.append({"url": current["url"], "by_ip": "", "by_name": "", "ts": now()})
             current = {"url": nxt["url"], "started_at": now(), "progress_sec": 0}
         else:
-            # hết danh sách
-            global current
             if current:
                 history.append({"url": current["url"], "by_ip": "", "by_name": "", "ts": now()})
             current = None
+
     return jsonify({"ok": True})
 
 # ---------------------------
-# Save settings
+# Host: save settings
 # ---------------------------
 @app.post("/api/host/save_settings")
 def api_save_settings():
@@ -243,7 +234,9 @@ def api_save_settings():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
 
-# đổi user/pass (cần HOST_API_KEY)
+# ---------------------------
+# Host: change auth
+# ---------------------------
 @app.post("/api/host/change_auth")
 def api_change_auth():
     if not require_host():
@@ -252,6 +245,7 @@ def api_change_auth():
     key = (data.get("key") or "").strip()
     if key != HOST_API_KEY:
         return jsonify({"ok": False, "error": "HOST_API_KEY invalid"}), 401
+
     new_user = (data.get("user") or "").strip() or settings["host_user"]
     new_pass = (data.get("pass") or "").strip() or settings["host_pass"]
     settings["host_user"] = new_user
