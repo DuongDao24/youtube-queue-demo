@@ -1,28 +1,57 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="vi">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>{{ app_title }}</title>
-  <link rel="stylesheet" href="/static/style.css"/>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YouTube Queue Online</title>
+  <link rel="stylesheet" href="/static/style.css">
   <script defer src="/static/app.js"></script>
 </head>
 <body>
-  <div class="wrap">
-    <header class="top">
-      <h1>YouTube Queue Online</h1>
-      <div id="logoBox"></div>
+  <div class="container">
+    <header>
+      <h1>🎵 YouTube Queue Online</h1>
+      <p id="app-sub">Thêm link YouTube – Phát luân phiên, tự động đồng bộ với Host</p>
     </header>
 
     <main class="grid">
       <section class="card">
         <h3>Add YouTube video</h3>
-        <p class="sub">Limit: <span id="rateInfo">60</span>s / IP. Nick change every <span id="nickHours">24</span>h.</p>
+        <p>Limit: <span id="limitText">60</span>s / IP. Nick change every <span id="nickText">24</span>h.</p>
 
-        <div class="row">
-          <input id="nick" placeholder="Your nickname (required)"/>
+        <div class="nick-row">
+          <input id="nick" placeholder="Your nickname (required)" />
           <button id="saveNick">Save nickname</button>
         </div>
 
-        <div class="row">
-          <input id="url"
+        <div class="submit-row">
+          <input id="url" placeholder="Paste YouTube link..." />
+          <button id="submit">Add to queue</button>
+        </div>
+      </section>
+
+      <section class="card nowplaying">
+        <h3>Now playing</h3>
+        <div id="nowplaying-box">
+          <div id="now-thumb"></div>
+          <p id="now-title">(Loading...)</p>
+          <a id="now-link" target="_blank">Open on YouTube</a>
+          <div id="progress-bar">
+            <div id="progress"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <section class="card queue">
+      <h3>Queue</h3>
+      <div id="queue-list"></div>
+    </section>
+
+    <section class="card history">
+      <h3>History</h3>
+      <div id="history-list"></div>
+    </section>
+  </div>
+</body>
+</html>
