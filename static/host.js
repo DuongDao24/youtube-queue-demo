@@ -1,185 +1,134 @@
-let isLoggedIn = false;
-const qs = (s)=>document.querySelector(s);
-const queueEl = qs("#queue");
-const historyEl = qs("#history");
-const countdown = qs("#countdown");
-let player = null;
-let currentId = null;
-let tickTimer = null;
-let pauseRefresh = false;
+// host.js — v02.3
+let PLAYER, YT_READY=false, AUTH={u:'Admin',p:'0000'}, STATE={}, CD_T=null;
 
-function whoHost(it){ return (it.by_name ? `${it.by_name} (${it.by_ip||''})` : (it.by_ip||'')); }
-function rQueue(it){
+function $(id){return document.getElementById(id)}
+function htmlItem(x, showIp){
   return `<div class="item">
-    <img class="thumb" src="https://i.ytimg.com/vi/${it.id}/default.jpg">
-    <div class="flex-1">
-      <div>${it.title||it.id}</div>
-      <div class="small">by ${whoHost(it)}</div>
-    </div>
-    <button class="btn" data-id="${it.id}">Remove</button>
-  </div>`;
-}
-function rHistory(it){
-  return `<div class="item">
-    <img class="thumb" src="https://i.ytimg.com/vi/${it.id}/default.jpg">
-    <div>
-      <div class="text-sm">${it.title||it.id}</div>
-      <div class="small">by ${whoHost(it)}</div>
+    <img class="it" src="${x.thumb}">
+    <div class="it2">
+      <div class="t">${x.title||x.id}</div>
+      <div class="muted">by <b>${x.who||'Guest'}</b>${showIp? ' • '+(x.ip||''): ''}</div>
     </div>
   </div>`;
 }
 
-async function loginRequired(){
-  const r = await fetch('/api/state');
-  if (!isLoggedIn){
-    qs("#loginModal").classList.remove("hidden");
-  }
-}
+function fetchState(){
+  return fetch('/api/state?host=1').then(r=>r.json()).then(s=>{
+    STATE = s;
+    $('limit').value = s.settings.submit_limit_s;
+    $('nickh').value = s.settings.nick_change_hours;
 
-qs("#btnLogin").onclick = async ()=>{
-  const u = qs("#loginUser").value.trim() || "Admin";
-  const p = qs("#loginPass").value.trim() || "0000";
-  const msg = qs("#loginMsg");
-  msg.textContent = "Signing in...";
-  const r = await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
-  const d = await r.json();
-  if (r.ok && d.ok){
-    isLoggedIn = true;
-    qs("#loginModal").classList.add("hidden");
-    await refresh(true);
-  } else {
-    msg.textContent = d.error || "Login failed";
-  }
-};
+    $('queue').innerHTML = (s.queue.map(it=>htmlItem(it,true)).join('')) || '<div class="muted">Queue empty</div>';
+    $('history').innerHTML = (s.history.map(it=>htmlItem(it,true)).join('')) || '<div class="muted">No history</div>';
 
-window.onYouTubeIframeAPIReady = function(){
-  player = new YT.Player('player', {
-    videoId: '',
-    playerVars: { 'autoplay': 1, 'controls': 1 },
-    events: { 'onReady': onPlayerReady, 'onStateChange': onPlayerStateChange }
+    if (YT_READY && s.playing && (!STATE._loadedId || STATE._loadedId!==s.playing.id)){
+      loadVideo(s.playing.id);
+    }
   });
 }
-function onPlayerReady(){
-  refresh(true);
-  if (tickTimer) clearInterval(tickTimer);
-  tickTimer = setInterval(sendProgressTick, 1000);
+
+function authHeader(){
+  return {'X-Host-Auth': `${AUTH.u}:${AUTH.p}`,'Content-Type':'application/json'};
 }
-function onPlayerStateChange(e){
-  if (e.data === YT.PlayerState.ENDED){
-    post('/api/progress', {ended:true, videoId: currentId, pos: player.getDuration(), dur: player.getDuration()})
-      .then(()=> setTimeout(refresh, 800));
+function postJSON(url, body){ return fetch(url,{method:'POST',headers:authHeader(),body:JSON.stringify(body||{})}).then(r=>r.json()); }
+
+function onYouTubeIframeAPIReady(){ YT_READY=true; createPlayer(); }
+window.onYouTubeIframeAPIReady = onYouTubeIframeAPIReady;
+
+function createPlayer(){
+  PLAYER = new YT.Player('player',{
+    videoId: null,
+    playerVars: { autoplay:1, rel:0, playsinline:1 },
+    events: { onReady: ()=>{}, onStateChange: onState }
+  });
+}
+function loadVideo(id){
+  STATE._loadedId = id;
+  if (PLAYER && PLAYER.loadVideoById) PLAYER.loadVideoById(id, 0, "large");
+  hideCountdown();
+}
+function onState(e){
+  const s = e.data;
+  if (s === YT.PlayerState.PLAYING){
+    tickProgress();
+    startCountdownWatcher();
+  }else if (s === YT.PlayerState.ENDED){
+    postJSON('/api/progress', {videoId:STATE._loadedId, pos:0, dur:0, ended:true}).then(()=>fetchState());
+  }else if (s === YT.PlayerState.PAUSED){
+    hideCountdown();
   }
 }
-async function post(path, body){
-  const r = await fetch(path, {method:'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body||{})});
-  return r.json().catch(()=>({}));
+function tickProgress(){
+  if (!PLAYER || PLAYER.getDuration===undefined) return;
+  const pos = PLAYER.getCurrentTime? PLAYER.getCurrentTime():0;
+  const dur = PLAYER.getDuration? PLAYER.getDuration():0;
+  postJSON('/api/progress',{videoId:STATE._loadedId,pos,dur});
+  setTimeout(tickProgress, 2000);
 }
-async function refresh(force=false){
-  if (!isLoggedIn){ await loginRequired(); return; }
-  const s = await (await fetch('/api/state')).json();
-  queueEl.innerHTML = (s.queue||[]).map(rQueue).join("") || '<div class="small">Queue empty</div>';
-  historyEl.innerHTML = (s.history||[]).slice(0,15).map(rHistory).join("") || '<div class="small">No history</div>';
-  if (!pauseRefresh || force){
-    qs("#rate").value = (s.config && s.config.rate_limit_s) || 180;
-    qs("#nickHours").value = (s.config && s.config.nick_change_hours) || 24;
-  }
-  const cid = s.current && s.current.id;
-  const prog = s.progress || {};
-  if (cid && player){
-    if (cid !== currentId || force){
-      currentId = cid;
-      const seek = Math.max(0, Math.floor((prog.pos||0)));
-      player.loadVideoById({videoId: cid, startSeconds: seek, suggestedQuality: 'large'});
+function startCountdownWatcher(){
+  if (CD_T) clearInterval(CD_T);
+  CD_T = setInterval(()=>{
+    if (!PLAYER) return;
+    const pos = PLAYER.getCurrentTime? PLAYER.getCurrentTime():0;
+    const dur = PLAYER.getDuration? PLAYER.getDuration():0;
+    if (dur>0 && dur-pos<=10){
+      showCountdown(Math.max(0,Math.ceil(dur-pos)));
+      if (dur-pos<=0.5){ clearInterval(CD_T); }
     } else {
-      const dur = Number(player.getDuration()||0);
-      const pos = Number(player.getCurrentTime()||0);
-      const target = Math.max(0, Math.floor((prog.pos||0)));
-      if (Math.abs(pos - target) > 3 && dur>0){
-        player.seekTo(target, true);
-      }
+      hideCountdown();
     }
-  }
+  }, 500);
 }
+function showCountdown(n){ $('countdown').classList.remove('hidden'); $('cd').textContent = n; }
+function hideCountdown(){ $('countdown').classList.add('hidden'); }
 
-async function sendProgressTick(){
-  if (!player || !isLoggedIn) return;
-  try{
-    const dur = Number(player.getDuration() || 0);
-    const pos = Number(player.getCurrentTime() || 0);
-    const vid = currentId;
-    if (dur>0){
-      const remain = Math.max(0, dur - pos);
-      if (remain <= 10){
-        countdown.classList.remove('hidden');
-        countdown.textContent = Math.ceil(remain);
-      } else {
-        countdown.classList.add('hidden');
-      }
-    }
-    await post('/api/progress', {videoId: vid, pos, dur, ended: false});
-  }catch(e){}
+$('btnPrev').onclick = ()=> postJSON('/api/prev').then(()=>fetchState());
+$('btnNext').onclick = ()=> postJSON('/api/next').then(()=>fetchState());
+$('btnClear').onclick= ()=> postJSON('/api/clear').then(()=>fetchState());
+
+$('btnPause').onclick = ()=>{
+  if (!PLAYER) return;
+  const st = PLAYER.getPlayerState();
+  if (st===YT.PlayerState.PLAYING) PLAYER.pauseVideo();
+  else PLAYER.playVideo();
+};
+
+$('btnSaveSettings').onclick = ()=>{
+  const submit_limit_s = parseInt($('limit').value||'60',10);
+  const nick_change_hours = parseInt($('nickh').value||'24',10);
+  fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    _user:AUTH.u,_pass:AUTH.p, submit_limit_s, nick_change_hours
+  })}).then(r=>r.json()).then(()=>fetchState());
+};
+
+$('btnSaveAuth').onclick = ()=>{
+  const user = $('newUser').value.trim();
+  const pass = $('newPass').value.trim();
+  const host_api_key = $('hostKey').value.trim();
+  fetch('/api/host_auth_update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user,pass,host_api_key})})
+    .then(r=>r.json()).then(j=>{
+      if (j.ok){ AUTH.u = user||'Admin'; AUTH.p = pass||'0000'; alert('Updated!'); } else alert('Key mismatch');
+    });
+};
+
+const modal = $('m'); const lu=$('lu'), lp=$('lp'), blogin=$('blogin');
+function showLogin(){ modal.style.display='flex'; lu.focus(); }
+function hideLogin(){ modal.style.display='none'; }
+function tryLogin(){
+  AUTH.u = lu.value.trim() || 'Admin';
+  AUTH.p = lp.value || '0000';
+  fetch('/api/host_login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user:AUTH.u,pass:AUTH.p})})
+    .then(r=>r.json()).then(j=>{ if (j.ok){ hideLogin(); fetchState(); } else $('lmsg').textContent='Wrong username or password'; });
 }
+blogin.onclick=tryLogin; lp.addEventListener('keydown',e=>{if(e.key==='Enter')tryLogin();});
+lu.addEventListener('keydown',e=>{if(e.key==='Enter')tryLogin();});
 
-// Controls
-qs("#btnPlay").onclick = async()=>{
-  const s = await (await fetch('/api/state')).json();
-  const cid = s.current && s.current.id;
-  const prog = s.progress || {};
-  if (cid){
-    currentId = cid;
-    const seek = Math.max(0, Math.floor((prog.pos||0)));
-    if (player) player.loadVideoById({videoId: cid, startSeconds: seek, suggestedQuality: 'large'});
-    await post('/api/play', {videoId: cid, pos: seek});
-  } else {
-    await post('/api/play', {});
-  }
-  await refresh(true);
-};
-qs("#btnNext").onclick = async()=>{ await post('/api/next', {}); await refresh(true); };
-qs("#btnPrev").onclick = async()=>{ await post('/api/prev', {}); await refresh(true); };
-qs("#btnClear").onclick = async()=>{ await post('/api/clear', {}); await refresh(true); };
+showLogin();
+setInterval(fetchState, 2000);
 
-["#rate","#nickHours"].forEach(sel=>{
-  const el = qs(sel);
-  el.addEventListener('focus', ()=> pauseRefresh = true);
-  el.addEventListener('blur', ()=> { pauseRefresh = false; });
-});
-
-qs("#btnSaveCfg").onclick = async()=>{
-  const v  = parseInt(qs("#rate").value||"180", 10);
-  const nh = parseInt(qs("#nickHours").value||"24", 10);
-  const r = await fetch('/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({rate_limit_s: v, nick_change_hours: nh})});
-  if (!r.ok){ alert("Not authorized or error"); return; }
-  await refresh(true);
-};
-
-qs("#btnLogo").onclick = async()=>{
-  const f = qs("#logo").files[0];
-  if(!f){ alert("Choose file"); return; }
-  const fd = new FormData(); fd.append("logo", f);
-  const r = await fetch('/api/logo', {method:'POST', body: fd});
-  if (!r.ok){ alert("Not authorized or error"); return; }
-  alert("Logo uploaded"); setTimeout(()=>location.reload(), 400);
-};
-
-qs("#btnSaveAuth").onclick = async()=>{
-  const u = qs("#hostUser").value.trim();
-  const p = qs("#hostPass").value.trim();
-  const k = qs("#hostKey").value.trim();
-  if (!k){ alert("Enter HOST_API_KEY to confirm."); return; }
-  const r = await fetch('/api/admin/update_auth', {method:'POST', headers:{'Content-Type':'application/json','X-Host-Key':k}, body: JSON.stringify({username:u, password:p})});
-  const d = await r.json().catch(()=>({}));
-  if (!r.ok){ alert(d.error||"Unauthorized"); return; }
-  alert("Saved. You can now login with new credentials.");
-};
-
-queueEl.addEventListener('click', async (e)=>{
-  if (e.target.tagName === "BUTTON" && e.target.dataset.id){
-    await fetch('/api/remove', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id:e.target.dataset.id})});
-    await refresh(true);
-  }
-});
-
-if (window.YT && window.YT.Player){ window.onYouTubeIframeAPIReady(); }
-refresh(true);
-setInterval(()=>{ if(!pauseRefresh) refresh(false); }, 2000);
+window.onYouTubeIframeAPIReady = function(){
+  if (!window.YT) return;
+  createPlayer();
+  YT_READY = true;
+  fetchState();
+}

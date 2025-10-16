@@ -1,123 +1,35 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8"/>
-  <title>{{ app_title }} — Host</title>
+  <title>{{ app_title }}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <link rel="stylesheet" href="/static/style.css"/>
-  <script>
-    const API = location.origin;
-    let hostToken = localStorage.getItem('ytq_host_token')||'';
-    function showLogin(){
-      document.getElementById('loginWrap').style.display='flex';
-      setTimeout(()=>document.getElementById('user').focus(),50);
-    }
-    async function doLogin(ev){
-      ev && ev.preventDefault();
-      const user = document.getElementById('user').value.trim();
-      const pass = document.getElementById('pass').value;
-      const r = await fetch(API+'/api/host/login',{
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({user, pass})
-      });
-      const j = await r.json();
-      if (!j.ok) return alert(j.error||'Login failed');
-      hostToken = j.token; localStorage.setItem('ytq_host_token', hostToken);
-      document.getElementById('loginWrap').style.display='none';
-      init();
-    }
-
-    function headerAuth(){ return hostToken? {'X-Host-Token': hostToken} : {}; }
-
-    async function loadState(){
-      const r = await fetch(API+'/api/state');
-      const s = await r.json();
-      // render iframe
-      const iframe = document.getElementById('player');
-      if (s.current){
-        const start = Math.max(0, Math.floor(s.current.pos||0));
-        const url = `https://www.youtube.com/embed/${s.current.vid}?autoplay=1&start=${start}&enablejsapi=1`;
-        if (iframe.dataset.src !== url){
-          iframe.src = url; iframe.dataset.src = url;
-        }
-      }
-      document.getElementById('limit').value = s.rate_limit_s;
-      document.getElementById('nickh').value = s.nick_change_h;
-      document.getElementById('queue').innerHTML = (s.queue||[]).map((it,idx)=>`
-        <div class="row">
-          <img src="https://img.youtube.com/vi/${it.vid}/default.jpg"/>
-          <div><div class="ttl">#${idx+1} — ${it.title||'(loading...)'}</div><div class="muted">by ${it.nick||'anonymous'}</div></div>
-        </div>`).join('') || '<div class="muted">Queue empty</div>';
-
-      document.getElementById('history').innerHTML = (s.history||[]).map((it)=>`
-        <div class="row">
-          <img src="https://img.youtube.com/vi/${it.vid}/default.jpg"/>
-          <div><div class="ttl">${it.title||'(loading...)'}</div><div class="muted">by ${it.nick||'anonymous'}</div></div>
-        </div>`).join('') || '<div class="muted">No history</div>';
-    }
-
-    async function playPause(){
-      const r = await fetch(API+'/api/toggle', {method:'POST', headers: headerAuth()});
-      const j = await r.json();
-      if (!j.ok) return alert(j.error||'Not authorized or error');
-      loadState();
-    }
-    async function next(){ const r = await fetch(API+'/api/next', {method:'POST', headers: headerAuth()}); const j = await r.json(); if(!j.ok) alert(j.error||'error'); loadState(); }
-    async function prev(){ const r = await fetch(API+'/api/prev', {method:'POST', headers: headerAuth()}); const j = await r.json(); if(!j.ok) alert(j.error||'error'); loadState(); }
-    async function clearQ(){ const r = await fetch(API+'/api/clear', {method:'POST', headers: headerAuth()}); const j = await r.json(); if(!j.ok) alert(j.error||'error'); loadState(); }
-
-    async function saveSettings(){
-      const rate = parseInt(document.getElementById('limit').value||'60');
-      const nickh = parseInt(document.getElementById('nickh').value||'24');
-      const r = await fetch(API+'/api/settings', {
-        method:'POST', headers: {'Content-Type':'application/json', ...headerAuth()},
-        body: JSON.stringify({rate_limit_s:rate, nick_change_h:nickh})
-      });
-      const j = await r.json();
-      if (!j.ok) alert(j.error||'Not authorized or error');
-      loadState();
-    }
-
-    function init(){
-      loadState();
-      setInterval(loadState, 2000);
-    }
-
-    window.addEventListener('load', ()=>{
-      if (!hostToken) showLogin(); else init();
-      document.getElementById('loginForm').addEventListener('submit', doLogin);
-    });
-  </script>
+  <script src="https://www.youtube.com/iframe_api"></script>
 </head>
 <body>
-  <div id="loginWrap" class="modal" style="display:none">
-    <form id="loginForm" class="dialog">
-      <h3>Host Login</h3>
-      <input id="user" type="text" placeholder="Username" value="Admin"/>
-      <input id="pass" type="password" placeholder="Password"/>
-      <button type="submit">Login</button>
-    </form>
-  </div>
+  <div class="wrap">
+    <h1>YouTube Queue Online — Host</h1>
 
-  <div class="container">
-    <h1>{{ app_title }} — Host</h1>
-
-    <div class="card">
+    <section class="card">
       <h3>YouTube Queue Control — Options</h3>
-      <div class="row gap">
-        <button onclick="prev()">Prev ⏮️</button>
-        <button onclick="playPause()">Pause / Resume ⏯️</button>
-        <button onclick="next()">Next ⏭️</button>
-        <button onclick="clearQ()">Clear 🧹</button>
+      <div class="row">
+        <button id="btnPrev">Prev</button>
+        <button id="btnPause">Pause / Resume</button>
+        <button id="btnNext">Next</button>
+        <button id="btnClear">Clear</button>
       </div>
-    </div>
+    </section>
 
-    <div class="card">
+    <section class="card">
       <h3>Now Playing</h3>
-      <iframe id="player" width="100%" height="360" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>
-    </div>
+      <div id="playerBox">
+        <div id="player"></div>
+        <div id="countdown" class="countdown hidden">Next in <b id="cd">10</b>s…</div>
+      </div>
+    </section>
 
-    <div class="grid">
+    <section class="grid">
       <div class="card">
         <h3>Queue</h3>
         <div id="queue"></div>
@@ -126,15 +38,44 @@
         <h3>Recent history</h3>
         <div id="history"></div>
       </div>
-      <div class="card">
-        <h3>Settings</h3>
+    </section>
+
+    <section class="card">
+      <h3>Settings</h3>
+      <div class="row">
         <label>Submit limit (seconds)</label>
-        <input id="limit" type="number" min="5" step="1"/>
-        <label>Nickname change (hours)</label>
-        <input id="nickh" type="number" min="1" step="1"/>
-        <button onclick="saveSettings()">Save settings</button>
+        <input id="limit" type="number" min="1" value="60">
       </div>
+      <div class="row">
+        <label>Nickname change (hours)</label>
+        <input id="nickh" type="number" min="1" value="24">
+      </div>
+      <div class="row">
+        <button id="btnSaveSettings">Save settings</button>
+      </div>
+      <hr/>
+      <h4>Host Auth</h4>
+      <div class="row"><input id="newUser" placeholder="New username"></div>
+      <div class="row"><input id="newPass" placeholder="New password"></div>
+      <div class="row"><input id="hostKey" placeholder="HOST_API_KEY to confirm"></div>
+      <div class="row"><button id="btnSaveAuth">Save host auth</button></div>
+      <div class="muted">* Đổi tài khoản quản trị cần HOST_API_KEY.</div>
+    </section>
+  </div>
+
+  <!-- Modal login -->
+  <div class="modal" id="m">
+    <div class="dlg">
+      <h3>Host Login</h3>
+      <input id="lu" placeholder="Username (default: Admin)">
+      <input id="lp" placeholder="Password (default: 0000)" type="password">
+      <div class="row right">
+        <button id="blogin">Login</button>
+      </div>
+      <div id="lmsg" class="msg"></div>
     </div>
   </div>
+
+  <script src="/static/host.js"></script>
 </body>
 </html>

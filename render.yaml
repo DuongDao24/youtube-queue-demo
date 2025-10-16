@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: youtube-queue
+    name: youtube-queue-v02
     env: python
     plan: free
     buildCommand: pip install -r requirements.txt
@@ -8,6 +8,4 @@ services:
     autoDeploy: true
     envVars:
       - key: HOST_API_KEY
-        value: ytq-premium-2025-dxd
-      - key: APP_TITLE
-        value: "YouTube Queue Online"
+        value: "ytq-premium-2025-dxd"
