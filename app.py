@@ -1,225 +1,133 @@
-import os, json, time, re
-from collections import deque
-from urllib.parse import urlparse, parse_qs
-from flask import Flask, request, jsonify, render_template, session
-import requests
+import os, time, re, base64
+from flask import Flask, request, jsonify, render_template, session, send_file, abort
+from io import BytesIO
 
-APP_TITLE      = os.environ.get("APP_TITLE", "YouTube Queue Online")
-HOST_API_KEY   = os.environ.get("HOST_API_KEY", "ytq-premium-2025-dxd")
-ENV_RATE_LIMIT = int(os.environ.get("RATE_LIMIT_S", "180"))
-CONFIG_PATH    = "config.json"
-STATE_PATH     = "queue_data.json"
-STATIC_DIR     = "static"
-ALLOWED_LOGO_EXT = {".png", ".jpg", ".jpeg", ".gif"}
+APP_TITLE = os.getenv("APP_TITLE", "YouTube Queue Online")
+HOST_API_KEY = os.getenv("HOST_API_KEY", "ytq-premium-2025-dxd")
+RATE_LIMIT_S = int(os.getenv("RATE_LIMIT_S", "180"))
+SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "change-me-secret")
+app.secret_key = SECRET_KEY
 
-queue = deque()
-history = deque(maxlen=300)
-current = None
-last_submit_ts = {}
-last_progress = {"videoId": None, "pos": 0, "dur": 0, "ts": 0, "ended": False}
+YT = re.compile(r"(youtube\.com/watch\?v=|youtu\.be/)([A-Za-z0-9_-]{6,})")
+now = lambda: int(time.time())
 
-config = {
-    "rate_limit_s": ENV_RATE_LIMIT,
-    "nick_change_hours": 24,
-    "names": {},
-    "name_changed_at": {},
-    "logo_path": None,
-    "auth": {"username": "Admin", "password": "0000"}
+STATE = {
+  "queue": [], "history": [], "current": None,
+  "progress": {"pos":0,"dur":0},
+  "settings":{"rate_limit": RATE_LIMIT_S, "nick_hours":24},
+  "nicknames":{}, "last_submit":{},
+  "logo_b64": None,
+  "host_auth":{"username":"Admin","password":"0000"}
 }
 
-YOUTUBE_ID_REGEX = re.compile(r"(?:v=|youtu\.be/|youtube\.com/(?:embed/|shorts/|watch\?v=))([A-Za-z0-9_-]{11})")
+def is_host(): return bool(session.get("host_ok"))
+def require_host():
+  if not is_host(): abort(401)
+def vid(url):
+  m = YT.search(url or ""); return m.group(2) if m else None
 
-def extract_youtube_id(url: str):
-    u = (url or "").strip()
-    if re.fullmatch(r"[A-Za-z0-9_-]{11}", u):
-        return u
-    m = YOUTUBE_ID_REGEX.search(u)
-    if m:
-        return m.group(1)
-    try:
-        q = parse_qs(urlparse(u).query)
-        v = q.get("v", [None])[0]
-        if v and re.fullmatch(r"[A-Za-z0-9_-]{11}", v):
-            return v
-    except Exception:
-        pass
-    return None
+@app.get("/")
+def index(): return render_template("index.html", app_title=APP_TITLE, logo_url=("/logo" if STATE["logo_b64"] else None))
+@app.get("/host")
+def host(): return render_template("host.html", app_title=APP_TITLE, logo_url=("/logo" if STATE["logo_b64"] else None))
 
-def fetch_title(video_id: str):
-    try:
-        r = requests.get(f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json", timeout=6)
-        if r.ok:
-            return r.json().get("title", video_id)
-    except Exception:
-        pass
-    return video_id
+@app.get("/logo")
+def logo():
+  if not STATE["logo_b64"]: abort(404)
+  return send_file(BytesIO(base64.b64decode(STATE["logo_b64"])), mimetype="image/png")
 
-def client_ip():
-    xff = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
-    return xff or (request.remote_addr or "unknown")
+@app.post("/api/login")
+def login():
+  d=request.get_json(silent=True) or {}; u=d.get("username",""); p=d.get("password","")
+  if u==STATE["host_auth"]["username"] and p==STATE["host_auth"]["password"]:
+    session["host_ok"]=True; return jsonify(ok=True)
+  return jsonify(ok=False,error="Not authorized"),401
 
-def load_state():
-    global queue, history, current, config
-    try:
-        if os.path.exists(CONFIG_PATH):
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, dict):
-                    for k, v in data.items():
-                        if k in config and isinstance(config[k], dict) and isinstance(v, dict):
-                            config[k].update(v)
-                        else:
-                            config[k] = v
-        if os.path.exists(STATE_PATH):
-            with open(STATE_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            queue.extend(data.get("queue", []))
-            history.extend(data.get("history", []))
-            current = data.get("current")
-    except Exception as e:
-        print("load_state error:", e)
+@app.post("/api/logout")
+def logout(): session.clear(); return jsonify(ok=True)
 
-def save_state():
-    try:
-        with open(STATE_PATH, "w", encoding="utf-8") as f:
-            json.dump({"queue": list(queue), "history": list(history), "current": current}, f, ensure_ascii=False, indent=2)
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(config, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print("save_state error:", e)
+@app.get("/api/check_host")
+def check_host(): return jsonify(ok=is_host())
 
-def get_logo_url():
-    if config.get("logo_path"):
-        return f"/{config['logo_path']}?t={int(time.time())}"
-    return None
+@app.get("/api/state")
+def state():
+  ip=request.headers.get("X-Forwarded-For", request.remote_addr) or "0.0.0.0"
+  rl=STATE["settings"]["rate_limit"]; last=STATE["last_submit"].get(ip,0)
+  remain=max(0, rl-(now()-last)) if last else 0
+  return jsonify(queue=STATE["queue"], history=STATE["history"], current=STATE["current"], progress=STATE["progress"], settings=STATE["settings"], rate_remaining=remain)
 
-def require_host_session():
-    if not session.get("host_logged_in"):
-        return jsonify({"ok": False, "error": "Unauthorized"}), 401
-    return None
+@app.post("/api/submit")
+def submit():
+  d=request.get_json(silent=True) or {}; url=(d.get("url") or "").strip(); name=(d.get("nickname") or "").strip()
+  if not url or not name: return jsonify(ok=False,error="Nickname and URL are required."),400
+  if "youtu" not in url: return jsonify(ok=False,error="Please submit a valid YouTube link."),400
+  v=vid(url); 
+  if not v: return jsonify(ok=False,error="Invalid YouTube URL."),400
+  ip=request.headers.get("X-Forwarded-For", request.remote_addr) or "0.0.0.0"
+  rl=STATE["settings"]["rate_limit"]; last=STATE["last_submit"].get(ip,0)
+  if last and now()-last<rl: return jsonify(ok=False,error=f"Please wait {rl-(now()-last)}s before next submit."),429
+  if ip not in STATE["nicknames"]: STATE["nicknames"][ip]={"name":name,"changed_at":now()}
+  item={"id":f"{now()}_{len(STATE['queue'])+1}","url":url,"vid":v,"title":url,"by":STATE["nicknames"][ip]["name"],"at":now()}
+  STATE["queue"].append(item); STATE["last_submit"][ip]=now()
+  if STATE["current"] is None:
+    STATE["current"]=STATE["queue"].pop(0); STATE["progress"]={"pos":0,"dur":0}
+  return jsonify(ok=True,item=item)
 
-@app.route("/")
-def page_index():
-    return render_template("index.html", app_title=APP_TITLE, rate_limit_s=int(config.get("rate_limit_s", ENV_RATE_LIMIT)), logo_url=get_logo_url())
+@app.post("/api/progress")
+def progress():
+  require_host()
+  d=request.get_json(silent=True) or {}; pos=float(d.get("pos") or 0); dur=float(d.get("dur") or 0)
+  STATE["progress"]={"pos":max(0,pos),"dur":max(0,dur)}; return jsonify(ok=True)
 
-@app.route("/host")
-def page_host():
-    return render_template("host.html", app_title=APP_TITLE, logo_url=get_logo_url())
+@app.post("/api/next")
+def nxt():
+  require_host()
+  if STATE["current"]: STATE["history"].insert(0,STATE["current"])
+  STATE["current"]=STATE["queue"].pop(0) if STATE["queue"] else None
+  STATE["progress"]={"pos":0,"dur":0}; return jsonify(ok=True,current=STATE["current"])
 
-# ---------- Auth ----------
-@app.route("/api/login", methods=["POST"])
-def api_login():
-    data = request.get_json(silent=True) or {}
-    u = (data.get("username") or "").strip()
-    p = (data.get("password") or "").strip()
-    if u == config["auth"]["username"] and p == config["auth"]["password"]:
-        session["host_logged_in"] = True
-        session["host_user"] = u
-        return jsonify({"ok": True})
-    return jsonify({"ok": False, "error": "Invalid credentials"}), 401
+@app.post("/api/prev")
+def prev():
+  require_host()
+  if STATE["history"]:
+    prev=STATE["history"].pop(0)
+    if STATE["current"]: STATE["queue"].insert(0,STATE["current"])
+    STATE["current"]=prev; STATE["progress"]={"pos":0,"dur":0}
+  return jsonify(ok=True,current=STATE["current"])
 
-@app.route("/api/logout", methods=["POST"])
-def api_logout():
-    session.clear()
-    return jsonify({"ok": True})
+@app.post("/api/clear")
+def clear(): require_host(); STATE["queue"].clear(); return jsonify(ok=True)
 
-@app.route("/api/admin/update_auth", methods=["POST"])
-def api_update_auth():
-    if request.headers.get("X-Host-Key") != HOST_API_KEY:
-        return jsonify({"ok": False, "error": "Unauthorized"}), 401
-    data = request.get_json(silent=True) or {}
-    new_user = (data.get("username") or "").strip() or config["auth"]["username"]
-    new_pass = (data.get("password") or "").strip() or config["auth"]["password"]
-    config["auth"]["username"] = new_user
-    config["auth"]["password"] = new_pass
-    save_state()
-    return jsonify({"ok": True, "username": new_user})
+@app.post("/api/save_settings")
+def save_settings():
+  require_host(); d=request.get_json(silent=True) or {}
+  try:
+    rl=int(d.get("rate_limit")); nh=int(d.get("nick_hours"))
+    if rl<0 or nh<1: raise ValueError
+    STATE["settings"]["rate_limit"]=rl; STATE["settings"]["nick_hours"]=nh
+    return jsonify(ok=True,settings=STATE["settings"])
+  except: return jsonify(ok=False,error="Invalid settings"),400
 
-# ---------- State & queue ----------
-@app.route("/api/state")
-def api_state():
-    return jsonify({
-        "current": current,
-        "queue": list(queue),
-        "history": list(history),
-        "progress": last_progress,
-        "config": {
-            "rate_limit_s": int(config.get("rate_limit_s", ENV_RATE_LIMIT)),
-            "nick_change_hours": int(config.get("nick_change_hours", 24)),
-            "logo_url": get_logo_url()
-        },
-        "auth": {"username": config["auth"]["username"]}
-    })
+@app.post("/api/host_auth")
+def host_auth():
+  d=request.get_json(silent=True) or {}
+  key=(d.get("host_api_key") or "").strip()
+  if key!=HOST_API_KEY: return jsonify(ok=False,error="Invalid HOST_API_KEY"),403
+  u=(d.get("username") or "").strip(); p=(d.get("password") or "").strip()
+  if not u or not p: return jsonify(ok=False,error="Missing username/password"),400
+  STATE["host_auth"]={"username":u,"password":p}; return jsonify(ok=True)
 
-@app.route("/api/add", methods=["POST"])
-def api_add():
-    data = request.get_json(silent=True) or {}
-    url = (data.get("url") or "").strip()
-    name = (data.get("name") or "").strip()
-    ip = client_ip()
+@app.post("/api/upload_logo")
+def upload_logo():
+  require_host()
+  if "file" not in request.files: return jsonify(ok=False,error="No file"),400
+  data=request.files["file"].read(); STATE["logo_b64"]=base64.b64encode(data).decode("ascii")
+  return jsonify(ok=True)
 
-    if not name:
-        return jsonify({"ok": False, "error": "Nickname required"}), 400
+@app.get("/healthz")
+def healthz(): return "ok"
 
-    now = time.time()
-    remain = int(config.get("rate_limit_s", ENV_RATE_LIMIT)) - int(now - last_submit_ts.get(ip, 0))
-    if remain > 0:
-        return jsonify({"ok": False, "error": f"Please wait {remain}s."}), 429
-
-    vid = extract_youtube_id(url)
-    if not vid:
-        return jsonify({"ok": False, "error": "Paste a valid YouTube video link."}), 400
-
-    title = fetch_title(vid)
-    item = {"id": vid, "title": title, "by_ip": ip, "by_name": name, "ts": int(now)}
-    queue.append(item)
-    last_submit_ts[ip] = now
-
-    global current
-    if not current:
-        current = queue.popleft()
-
-    save_state()
-    return jsonify({"ok": True, "item": item})
-
-@app.route("/api/progress", methods=["POST"])
-def api_progress():
-    unauth = require_host_session()
-    if unauth: return unauth
-    global last_progress, current
-    data = request.get_json(silent=True) or {}
-    pos   = float(data.get("pos", 0))
-    dur   = float(data.get("dur", 0))
-    ended = bool(data.get("ended", False))
-    vid   = data.get("videoId")
-    ts    = time.time()
-    last_progress = {"videoId": vid, "pos": pos, "dur": dur, "ts": ts, "ended": ended}
-
-    if ended:
-        if current:
-            history.appendleft(current)
-        current = queue.popleft() if queue else None
-        last_progress = {
-            "videoId": current["id"] if current else None,
-            "pos": 0,
-            "dur": 0,
-            "ts": time.time(),
-            "ended": False
-        }
-        save_state()
-        return jsonify({"ok": True, "next": current})
-
-    save_state()
-    return jsonify({"ok": True})
-
-@app.route("/healthz")
-def healthz():
-    return "ok", 200
-
-load_state()
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=False)
+if __name__=="__main__":
+  app.run(host="0.0.0.0", port=5000, debug=True)
