@@ -1,115 +1,28 @@
 <!doctype html>
-<html lang="en">
+<html lang="vi">
 <head>
   <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>{{ app_title }}</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <link rel="stylesheet" href="/static/style.css"/>
+  <script defer src="/static/app.js"></script>
 </head>
 <body>
   <div class="wrap">
-    <h1>YouTube Queue Online</h1>
+    <header class="top">
+      <h1>YouTube Queue Online</h1>
+      <div id="logoBox"></div>
+    </header>
 
-    <div class="grid">
+    <main class="grid">
       <section class="card">
         <h3>Add YouTube video</h3>
-        <div class="muted">Limit: <span id="limitInfo">...</span>. Nick change every <span id="nickInfo">...</span>.</div>
+        <p class="sub">Limit: <span id="rateInfo">60</span>s / IP. Nick change every <span id="nickHours">24</span>h.</p>
+
         <div class="row">
-          <input id="yturl" type="url" placeholder="https://www.youtube.com/watch?v=...">
-          <button id="btnAdd">Add to queue</button>
+          <input id="nick" placeholder="Your nickname (required)"/>
+          <button id="saveNick">Save nickname</button>
         </div>
+
         <div class="row">
-          <input id="nick" maxlength="30" placeholder="Your nickname (required)">
-          <button id="btnNick">Save nickname</button>
-        </div>
-        <div class="msg" id="msg"></div>
-      </section>
-
-      <section class="card">
-        <h3>Now playing</h3>
-        <div id="nowbox">
-          <img id="nowthumb" class="thumb" alt="">
-          <div class="title" id="nowtitle">(loading...)</div>
-          <div class="progress"><div id="bar"></div></div>
-          <a id="openYT" target="_blank" class="link">Open on YouTube</a>
-        </div>
-      </section>
-    </div>
-
-    <section class="card">
-      <h3>Queue</h3>
-      <div id="queue"></div>
-    </section>
-
-    <section class="card">
-      <h3>History</h3>
-      <div id="history"></div>
-    </section>
-  </div>
-
-  <script>
-    const S = {settings:{}, playing:null, progress:{pos:0,dur:0}, queue:[], history:[]};
-
-    function el(id){return document.getElementById(id)}
-    function itemHTML(x){
-      return `<div class="item">
-        <img src="${x.thumb}" class="it"/>
-        <div class="it2">
-          <div class="t">${x.title||x.id}</div>
-          <div class="muted">by <b>${x.who||'Guest'}</b></div>
-        </div>
-      </div>`;
-    }
-
-    async function getState(){
-      const r = await fetch('/api/state'); const j = await r.json();
-      Object.assign(S, j);
-      el('limitInfo').textContent = S.settings.submit_limit_s+'s / IP';
-      el('nickInfo').textContent = S.settings.nick_change_hours+'h';
-      const p = S.playing;
-      if(p){
-        el('nowthumb').src = p.thumb;
-        el('nowtitle').textContent = p.title || p.id;
-        el('openYT').href = p.url;
-      }else{
-        el('nowthumb').src = '';
-        el('nowtitle').textContent = '(no video)';
-        el('openYT').href = '#';
-      }
-
-      let qhtml = S.queue.map(itemHTML).join('') || '<div class="muted">Queue empty</div>';
-      el('queue').innerHTML = qhtml;
-
-      let hhtml = S.history.map(itemHTML).join('') || '<div class="muted">No history</div>';
-      el('history').innerHTML = hhtml;
-
-      const pos = S.progress.pos || 0, dur = S.progress.dur || 0;
-      el('bar').style.width = (dur>0? Math.min(100, pos*100/dur):0) + '%';
-    }
-
-    async function saveNick(){
-      const n = el('nick').value.trim();
-      if(!n){el('msg').textContent='Please set nickname before submit.';return;}
-      const r = await fetch('/api/nick',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nick:n})});
-      const j = await r.json(); el('msg').textContent = j.ok?'Saved nickname!':'Error';
-    }
-
-    async function add(){
-      const n = el('nick').value.trim();
-      if(!n){el('msg').textContent='Please set nickname before submit.';return;}
-      const url = el('yturl').value.trim();
-      const r = await fetch('/api/enqueue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
-      const j = await r.json();
-      if(j.ok){ el('yturl').value=''; el('msg').textContent = 'Added!'; }
-      else{
-        el('msg').textContent = j.error==='RATE_LIMIT' ? ('Please wait '+j.retry_in+'s') : 'Invalid link';
-      }
-    }
-
-    el('btnNick').onclick=saveNick;
-    el('btnAdd').onclick=add;
-    setInterval(getState, 2000);
-    getState();
-  </script>
-</body>
-</html>
+          <input id="url"

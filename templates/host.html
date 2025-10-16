@@ -1,81 +1,64 @@
 <!doctype html>
-<html lang="en">
+<html lang="vi">
 <head>
   <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>{{ app_title }}</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <link rel="stylesheet" href="/static/style.css"/>
   <script src="https://www.youtube.com/iframe_api"></script>
+  <script defer src="/static/host.js"></script>
 </head>
 <body>
-  <div class="wrap">
-    <h1>YouTube Queue Online — Host</h1>
+<div class="wrap">
+  <h1>YouTube Queue Online — Host</h1>
 
-    <section class="card">
-      <h3>YouTube Queue Control — Options</h3>
-      <div class="row">
-        <button id="btnPrev">Prev</button>
-        <button id="btnPause">Pause / Resume</button>
-        <button id="btnNext">Next</button>
-        <button id="btnClear">Clear</button>
-      </div>
-    </section>
-
-    <section class="card">
-      <h3>Now Playing</h3>
-      <div id="playerBox">
-        <div id="player"></div>
-        <div id="countdown" class="countdown hidden">Next in <b id="cd">10</b>s…</div>
-      </div>
-    </section>
-
-    <section class="grid">
-      <div class="card">
-        <h3>Queue</h3>
-        <div id="queue"></div>
-      </div>
-      <div class="card">
-        <h3>Recent history</h3>
-        <div id="history"></div>
-      </div>
-    </section>
-
-    <section class="card">
-      <h3>Settings</h3>
-      <div class="row">
-        <label>Submit limit (seconds)</label>
-        <input id="limit" type="number" min="1" value="60">
-      </div>
-      <div class="row">
-        <label>Nickname change (hours)</label>
-        <input id="nickh" type="number" min="1" value="24">
-      </div>
-      <div class="row">
-        <button id="btnSaveSettings">Save settings</button>
-      </div>
-      <hr/>
-      <h4>Host Auth</h4>
-      <div class="row"><input id="newUser" placeholder="New username"></div>
-      <div class="row"><input id="newPass" placeholder="New password"></div>
-      <div class="row"><input id="hostKey" placeholder="HOST_API_KEY to confirm"></div>
-      <div class="row"><button id="btnSaveAuth">Save host auth</button></div>
-      <div class="muted">* Đổi tài khoản quản trị cần HOST_API_KEY.</div>
-    </section>
-  </div>
-
-  <!-- Modal login -->
-  <div class="modal" id="m">
-    <div class="dlg">
-      <h3>Host Login</h3>
-      <input id="lu" placeholder="Username (default: Admin)">
-      <input id="lp" placeholder="Password (default: 0000)" type="password">
-      <div class="row right">
-        <button id="blogin">Login</button>
-      </div>
-      <div id="lmsg" class="msg"></div>
+  <section class="card">
+    <div class="row">
+      <button id="btnPrev">Prev</button>
+      <button id="btnPause">Pause / Resume</button>
+      <button id="btnNext">Next</button>
+      <button id="btnClear">Clear</button>
     </div>
-  </div>
+  </section>
 
-  <script src="/static/host.js"></script>
+  <section class="card">
+    <h3>Now Playing</h3>
+    <div id="player" class="player"></div>
+  </section>
+
+  <section class="grid">
+    <section class="card">
+      <h3>Queue</h3>
+      <div id="queue"></div>
+    </section>
+    <section class="card">
+      <h3>Recent history</h3>
+      <div id="history" class="muted">No history</div>
+    </section>
+  </section>
+
+  <section class="card">
+    <h3>Settings</h3>
+    <div class="row"><label>Submit limit (seconds)</label><input id="rate" type="number"></div>
+    <div class="row"><label>Nickname change (hours)</label><input id="nickHours" type="number"></div>
+    <div class="row"><button id="saveSettings">Save settings</button></div>
+    <hr/>
+    <div class="row"><label>New username</label><input id="newUser" placeholder=""></div>
+    <div class="row"><label>New password</label><input id="newPass" type="password" placeholder=""></div>
+    <div class="row"><label>HOST_API_KEY to confirm</label><input id="hostKey" type="password" placeholder=""></div>
+    <div class="row"><button id="saveHostAuth">Save host auth</button></div>
+    <p class="muted">* Đổi tài khoản quản trị cần HOST_API_KEY.</p>
+  </section>
+</div>
+
+<!-- login modal -->
+<div id="loginBackdrop" class="backdrop" style="display:flex">
+  <div class="modal">
+    <h3>Host Login</h3>
+    <input id="lgUser" placeholder="Username">
+    <input id="lgPass" placeholder="Password" type="password">
+    <div class="row right"><button id="btnLogin">Login</button></div>
+  </div>
+</div>
 </body>
 </html>
