@@ -1,4 +1,7 @@
-/* v01.5.1 User Page Neumorphic Theme */
+/* =============================================================
+   YouTube Queue Online — v01.5.2
+   Neumorphic User Page + Now Playing & History layout fix
+   ============================================================= */
 
 /* Background */
 .neumorphic-bg {
@@ -82,4 +85,72 @@
 /* Utility */
 .soft-shadow {
   box-shadow: 6px 6px 12px #bec3c9, -6px -6px 12px #ffffff;
+}
+
+/* === Fix layout for Now Playing & History === */
+
+/* Now Playing: giới hạn text, tránh tràn khung */
+#playing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+#playing .video-title {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: #444;
+  margin-top: 0.5rem;
+  max-width: 90%;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: normal;
+}
+
+/* History: căn chỉnh thumbnail + text gọn gàng */
+#history .item {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 8px 12px;
+  border-radius: 14px;
+  background: #e0e5ec;
+  box-shadow: inset 3px 3px 5px #bec3c9, inset -3px -3px 5px #ffffff;
+  transition: all 0.25s ease;
+}
+#history .item:hover {
+  box-shadow: 2px 2px 4px #bec3c9, -2px -2px 4px #ffffff;
+}
+
+#history .item img.thumb {
+  width: 80px;
+  height: 45px;
+  object-fit: cover;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+#history .item .info {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex: 1;
+  min-width: 0;
+}
+
+#history .item .info .title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #333;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#history .item .info .user {
+  font-size: 0.8rem;
+  color: #666;
+  margin-top: 2px;
 }
