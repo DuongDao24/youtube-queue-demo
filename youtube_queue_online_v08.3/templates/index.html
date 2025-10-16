@@ -1,0 +1,97 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>{{ app_title }} — User</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <link rel="stylesheet" href="/static/style.css"/>
+  <script>
+    const API = location.origin;
+    let nickname = localStorage.getItem("ytq_nickname") || "";
+    let lastSet = parseInt(localStorage.getItem("ytq_nick_ts")||"0");
+
+    async function loadState(){
+      const r = await fetch(API+'/api/state');
+      const s = await r.json();
+      // render now playing
+      const np = document.getElementById('nowplaying');
+      if (s.current){
+        np.innerHTML = `<div class="card">
+          <img src="https://img.youtube.com/vi/${s.current.vid}/hqdefault.jpg"/>
+          <div><b>${s.current.title||'(loading...)'}</b><br/>
+          <a target="_blank" href="https://www.youtube.com/watch?v=${s.current.vid}">Open on YouTube</a>
+          <div class="bar"><div style="width:${s.current.progress_pct||0}%"></div></div>
+          </div>
+        </div>`;
+      }else{
+        np.innerHTML = '<div class="muted">Nothing playing</div>';
+      }
+      // queue
+      const q = document.getElementById('queue');
+      q.innerHTML = (s.queue||[]).map((it,idx)=>`<div class="row">
+        <img src="https://img.youtube.com/vi/${it.vid}/default.jpg"/>
+        <div><div class="ttl">#${idx+1} — ${it.title||'(loading...)'}</div><div class="muted">by ${it.nick||'anonymous'}</div></div>
+      </div>`).join('') || '<div class="muted">Queue empty</div>';
+
+      // history
+      const h = document.getElementById('history');
+      h.innerHTML = (s.history||[]).map((it)=>`<div class="row">
+        <img src="https://img.youtube.com/vi/${it.vid}/default.jpg"/>
+        <div><div class="ttl">${it.title||'(loading...)'}</div><div class="muted">by ${it.nick||'anonymous'}</div></div>
+      </div>`).join('') || '<div class="muted">No history</div>';
+
+      // show limits
+      document.getElementById('limitInfo').innerText = s.rate_limit_s + 's';
+      document.getElementById('nickLimitInfo').innerText = s.nick_change_h + 'h';
+    }
+
+    async function addToQueue(){
+      const url = document.getElementById('yturl').value.trim();
+      if (!nickname){
+        nickname = prompt("Nhập nickname (bắt buộc):")||"";
+        if (!nickname){ alert("Bạn cần đặt nickname trước khi submit."); return; }
+        localStorage.setItem("ytq_nickname", nickname);
+        localStorage.setItem("ytq_nick_ts", String(Date.now()));
+      }
+      const r = await fetch(API+'/api/enqueue', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({url, nickname})
+      });
+      const j = await r.json();
+      if (!j.ok){ alert(j.error||'Error'); }
+      document.getElementById('yturl').value='';
+      loadState();
+    }
+
+    setInterval(loadState, 2000);
+    window.addEventListener('load', loadState);
+  </script>
+</head>
+<body>
+  <div class="container">
+    <h1>{{ app_title }}</h1>
+    <div class="grid">
+      <div class="card">
+        <h3>Add YouTube video</h3>
+        <div class="muted">Limit: <span id="limitInfo">…</span> / IP. Nick change every <span id="nickLimitInfo">…</span>.</div>
+        <input id="yturl" type="text" placeholder="https://www.youtube.com/watch?v=..."/>
+        <button onclick="addToQueue()">Add to queue</button>
+      </div>
+      <div class="card">
+        <h3>Now playing</h3>
+        <div id="nowplaying"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Queue</h3>
+      <div id="queue"></div>
+    </div>
+
+    <div class="card">
+      <h3>History</h3>
+      <div id="history"></div>
+    </div>
+  </div>
+</body>
+</html>
