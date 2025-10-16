@@ -1,1 +1,68 @@
-<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>{{ app_title }}</title><script src='https://cdn.tailwindcss.com'></script><link rel='stylesheet' href='/static/style.css'></head><body class='bg-gray-50 text-gray-900'><div class='max-w-5xl mx-auto p-6 space-y-6'><div class='flex items-center gap-4'>{% if logo_url %}<img src='{{ logo_url }}' class='h-10 w-auto rounded-md shadow-sm' alt='logo'>{% endif %}<h1 class='text-2xl font-bold'>{{ app_title }}</h1></div><div class='grid grid-cols-1 md:grid-cols-2 gap-6'><div class='bg-white rounded-2xl shadow p-5'><h2 class='font-semibold mb-2'>Add YouTube video</h2><p class='text-sm text-gray-600 mb-4'>Limit: <b id='limit'>{{ rate_limit_s }}</b>s per IP</p><form id='addForm' class='space-y-3'><input id='url' class='w-full border rounded-xl px-3 py-2' placeholder='https://www.youtube.com/watch?v=...' required><button class='bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl'>Add to queue</button><div id='msg' class='text-sm text-gray-600'></div></form><hr class='my-4'><h3 class='font-semibold mb-2'>Your nickname (required)</h3><div class='flex gap-2 items-center'><input id='nickname' class='border rounded-xl px-3 py-2' placeholder='Enter a name (1–24 chars)'><button id='saveName' class='bg-gray-700 text-white px-3 py-2 rounded-xl'>Save</button><span id='nameMsg' class='text-sm text-gray-600'></span></div></div><div class='bg-white rounded-2xl shadow p-5'><h2 class='font-semibold mb-3'>Now playing</h2><div id='playing' class='flex items-center gap-4'></div><div class='h-2 bg-gray-200 rounded-full overflow-hidden mt-3'><div id='pbar' class='h-full bg-blue-600' style='width:0%'></div></div></div></div><div class='bg-white rounded-2xl shadow p-5'><h2 class='font-semibold mb-3'>Queue</h2><div id='queue' class='space-y-3'></div></div><div class='bg-white rounded-2xl shadow p-5'><h2 class='font-semibold mb-3'>History</h2><div id='history' class='space-y-3'></div></div></div><script src='/static/app.js'></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ app_title }}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="neumorphic-bg text-gray-800 min-h-screen flex flex-col items-center justify-start py-10">
+
+  <div class="w-full max-w-5xl px-6 space-y-8">
+    <!-- Header -->
+    <div class="flex items-center gap-4 justify-center mb-4">
+      {% if logo_url %}
+        <img src="{{ logo_url }}" class="h-12 w-auto rounded-xl soft-shadow" alt="logo">
+      {% endif %}
+      <h1 class="text-3xl font-bold text-gray-700 tracking-wide">{{ app_title }}</h1>
+    </div>
+
+    <!-- Main grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+      <!-- Add Video + Nickname -->
+      <div class="card p-6">
+        <h2 class="section-title">🎬 Add YouTube Video</h2>
+        <p class="text-sm mb-4 text-gray-500">Limit: <b id="limit">{{ rate_limit_s }}</b>s per IP</p>
+        <form id="addForm" class="space-y-3">
+          <input id="url" class="input w-full" placeholder="https://www.youtube.com/watch?v=..." required>
+          <button class="button-primary w-full">Add to queue</button>
+          <div id="msg" class="text-sm text-gray-500"></div>
+        </form>
+
+        <hr class="my-6 border-gray-300/30">
+
+        <h3 class="section-title">👤 Your Nickname</h3>
+        <div class="flex gap-3 items-center">
+          <input id="nickname" class="input flex-1" placeholder="Enter a name (1–24 chars)">
+          <button id="saveName" class="button-soft">Save</button>
+        </div>
+        <span id="nameMsg" class="block mt-2 text-sm text-gray-500"></span>
+      </div>
+
+      <!-- Now Playing -->
+      <div class="card p-6">
+        <h2 class="section-title">🎵 Now Playing</h2>
+        <div id="playing" class="flex items-center gap-4 py-2"></div>
+        <div class="progress-bar mt-4">
+          <div id="pbar" class="progress-fill" style="width:0%"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Queue -->
+    <div class="card p-6">
+      <h2 class="section-title">📜 Queue</h2>
+      <div id="queue" class="space-y-3 mt-3"></div>
+    </div>
+
+    <!-- History -->
+    <div class="card p-6">
+      <h2 class="section-title">🕓 History</h2>
+      <div id="history" class="space-y-3 mt-3"></div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
