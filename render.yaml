@@ -1,7 +1,0 @@
-services:
-  - type: web
-    name: youtube-queue
-    env: python
-    buildCommand: ""
-    startCommand: "python core/app.py"
-    plan: free
