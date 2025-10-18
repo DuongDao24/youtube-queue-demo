@@ -1,0 +1,14 @@
+{
+  "system": {
+    "password_hash": "9af15b336e6a9619928537df30b2e6a2376569fcf9d7e773eccede65606529a0",
+    "nickname_cooldown_hours": 1,
+    "auto_clear_days": 7,
+    "theme": "dark",
+    "version": "v01.6.2"
+  },
+  "branding": {
+    "logo_url": "/static/logo.png",
+    "system_name": "YouTube Queue",
+    "slogan": "Office Music Queue"
+  }
+}
