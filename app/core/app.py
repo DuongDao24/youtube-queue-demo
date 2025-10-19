@@ -1,20 +1,15 @@
 # -*- coding: utf-8 -*-
 """
 YouTube Queue | Web — Core Backend (Flask)
-Version: v01.6.2d (Stable + Full Compat)
+Version: v01.6.2e (Secure + Full Compat)
 Author: Duong – XDigital
 
-CHANGELOG (v01.6.2d):
-- Kept previous fixes (Render-safe IP detection, atomic JSON writes, queue/history trim).
-- Added full compatibility routes for current frontend:
-  * /api/host/verify  (host login)
-  * /api/nickname  (GET/POST nickname)
-  * /api/add        (enqueue video)
-  * /api/update_settings (logo, system configs, password)
-  * /api/logo       (logo upload -> /static/uploads/)
-  * /api/config     (save UI config: rate_limit_s, nickname_valid_minutes)
-  * /api/host/change_password
-- Ordered route definitions to avoid early references.
+What's new in v01.6.2e:
+- Secure: /api/host/change_password now requires HOST_KEY.
+- Nickname POST accepts FormData (request.form / request.values).
+- Full compat routes for current frontend (/api/...).
+- Render-safe IP detection, atomic JSON writes with logs.
+- Persistent JSON storage + CSV activity log; trim Queue<=50, History<=20.
 """
 
 import os
@@ -103,11 +98,12 @@ ensure_dirs()
 
 default_settings = {
     "system": {
-        "password_hash": hash_password("0000"),  # default host pass
+        "password_hash": hash_password("0000"),   # default host pass
+        "host_key": "HOST_KEY",                   # security key required to change password
         "nickname_cooldown_hours": 1,
-        "auto_clear_days": 7,  # configured but NOT enforced in code
+        "auto_clear_days": 7,                     # configured (not enforced here)
         "theme": "dark",
-        "version": "v01.6.2d",
+        "version": "v01.6.2e",
     },
     "branding": {
         "logo_url": "/static/logo.png",
@@ -149,7 +145,7 @@ app = Flask(__name__, template_folder=TEMPLATES_DIR, static_folder=STATIC_DIR)
 
 @app.post("/verify_host")
 def verify_host():
-    data = request.get_json(silent=True) or request.form
+    data = request.get_json(silent=True) or request.form or request.values
     pw = (data.get("password") or "").strip()
     if hash_password(pw) == settings["system"]["password_hash"]:
         return jsonify({"ok": True})
@@ -163,7 +159,7 @@ def user_page():
         settings=settings,
         queue=qstate.get("queue", []),
         history=qstate.get("history", []),
-        version=settings["system"].get("version", "v01.6.2d"),
+        version=settings["system"].get("version", "v01.6.2e"),
     )
 
 
@@ -175,14 +171,14 @@ def host_page():
         users=users,
         queue=qstate.get("queue", []),
         history=qstate.get("history", []),
-        version=settings["system"].get("version", "v01.6.2d"),
+        version=settings["system"].get("version", "v01.6.2e"),
     )
 
 
 @app.post("/set_nickname")
 def set_nickname():
     ip = client_ip()
-    data = request.get_json(silent=True) or request.form
+    data = request.get_json(silent=True) or request.form or request.values
     nickname = (data.get("nickname") or "").strip()
     cooldown_h = settings["system"].get("nickname_cooldown_hours", 1)
 
@@ -219,7 +215,7 @@ def set_nickname():
 @app.post("/submit")
 def submit():
     ip = client_ip()
-    data = request.get_json(silent=True) or request.form
+    data = request.get_json(silent=True) or request.form or request.values
     url = (data.get("url") or "").strip()
     title = (data.get("title") or "").strip()
 
@@ -266,7 +262,7 @@ def clear_queue():
 
 @app.post("/update_settings")
 def update_settings():
-    data = request.get_json(silent=True) or request.form
+    data = request.get_json(silent=True) or request.form or request.values
     sys = settings.setdefault("system", {})
     brand = settings.setdefault("branding", {})
 
@@ -314,7 +310,7 @@ def api_state():
 
 @app.post("/api/host/verify")
 def api_verify_host():
-    data = request.get_json(silent=True) or request.form
+    data = request.get_json(silent=True) or request.form or request.values
     pw = (data.get("password") or "").strip()
     if hash_password(pw) == settings["system"]["password_hash"]:
         return jsonify({"ok": True})
@@ -402,7 +398,7 @@ def api_logo():
 
 @app.post("/api/config")
 def api_config():
-    data = request.get_json(silent=True) or {}
+    data = request.get_json(silent=True) or request.form or request.values
     sys = settings.setdefault("system", {})
     if "rate_limit_s" in data:
         try:
@@ -427,16 +423,23 @@ def api_config():
 
 @app.post("/api/host/change_password")
 def api_host_change_password():
-    data = request.get_json(silent=True) or {}
+    data = request.get_json(silent=True) or request.form or request.values
     old_pw = (data.get("old_password") or "").strip()
     new_pw = (data.get("new_password") or "").strip()
+    host_key = (data.get("key") or "").strip()
+
+    sys = settings.setdefault("system", {})
+    stored_hash = sys.get("password_hash")
+    stored_key = sys.get("host_key", "HOST_KEY")
 
     if not new_pw:
         return jsonify({"ok": False, "error": "New password required"}), 400
-    if hash_password(old_pw) != settings["system"].get("password_hash"):
+    if hash_password(old_pw) != stored_hash:
         return jsonify({"ok": False, "error": "Old password incorrect"}), 403
+    if host_key != stored_key:
+        return jsonify({"ok": False, "error": "Invalid HOST_KEY"}), 403
 
-    settings["system"]["password_hash"] = hash_password(new_pw)
+    sys["password_hash"] = hash_password(new_pw)
     save_settings()
     return jsonify({"ok": True})
 
