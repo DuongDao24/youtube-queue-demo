@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 """
 YouTube Queue | Web — Core Backend (Flask)
-Version: v01.6.2b (Stable on Render)
+Version: v01.6.2d (Stable on Render)
 Author: Duong – XDigital
-Updated: 2025-10-18
 
-CHANGELOG (v01.6.2a):
-- Added /verify_host endpoint for host login verification (fix Wrong password).
-- Improved client_ip() to handle Render/None IP values.
-- Added write safety wrapper for JSON file operations.
-- Persistent data storage in /app/core/data, CSV logging maintained.
+CHANGELOG (v01.6.2d):
+- Added /api/update_settings (compat for logo/password updates).
+- Kept /api/host/verify and /api/set_nickname (compat for old frontend).
+- Ordered route definitions to avoid early references.
+- Render-safe IP detection and safe JSON writes with info logs.
+- Persistent JSON + CSV log; auto-trim Queue<=50, History<=20 (auto-clear disabled).
 """
 
 import os
@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 from hashlib import sha256
 from flask import Flask, request, jsonify, render_template
 
+# ----- Paths -----
 CORE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.abspath(os.path.join(CORE_DIR, os.pardir))
 TEMPLATES_DIR = os.path.join(APP_DIR, "templates")
@@ -33,11 +34,15 @@ LOG_FILE = os.path.join(DATA_DIR, "activity_log.csv")
 MAX_QUEUE = 50
 MAX_HISTORY = 20
 
+
+# ----- Utils -----
 def _now_iso():
     return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
+
 def ensure_dirs():
     os.makedirs(DATA_DIR, exist_ok=True)
+
 
 def read_json(path, fallback):
     try:
@@ -46,14 +51,18 @@ def read_json(path, fallback):
     except Exception:
         return fallback
 
+
 def write_json(path, obj):
+    """Atomic write + log so we can see success in Render Logs."""
     try:
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(obj, f, ensure_ascii=False, indent=2)
         os.replace(tmp, path)
+        print(f"[INFO] JSON written successfully: {path}")
     except Exception as e:
         print(f"[WARN] Could not write file {path}: {e}")
+
 
 def log_action(action, user, ip, title="N/A", url="N/A"):
     header = ["timestamp", "action", "user", "ip", "title", "url"]
@@ -64,7 +73,9 @@ def log_action(action, user, ip, title="N/A", url="N/A"):
             writer.writerow(header)
         writer.writerow([_now_iso(), action, user, ip, title, url])
 
+
 def client_ip():
+    """Robust IP detection behind proxies (Render)."""
     try:
         forwarded = request.headers.get("X-Forwarded-For", "")
         if forwarded:
@@ -77,39 +88,44 @@ def client_ip():
     except Exception:
         return "0.0.0.0"
 
+
 def hash_password(pw: str) -> str:
     return sha256(pw.encode("utf-8")).hexdigest()
 
+
+# ----- Init data -----
 ensure_dirs()
 
 default_settings = {
     "system": {
-        "password_hash": hash_password("0000"),
+        "password_hash": hash_password("0000"),  # default host pass
         "nickname_cooldown_hours": 1,
-        "auto_clear_days": 7,
+        "auto_clear_days": 7,  # configured but NOT enforced
         "theme": "dark",
-        "version": "v01.6.2b"
+        "version": "v01.6.2d",
     },
     "branding": {
         "logo_url": "/static/logo.png",
         "system_name": "YouTube Queue",
-        "slogan": "Office Music Queue"
-    }
+        "slogan": "Office Music Queue",
+    },
 }
-
-default_users = {}
+default_users = {}  # ip -> {nickname, last_changed}
 default_queue = {"last_saved": _now_iso(), "queue": [], "history": []}
 
 settings = read_json(SETTINGS_FILE, default_settings)
 users = read_json(USERS_FILE, default_users)
 qstate = read_json(QUEUE_FILE, default_queue)
 
+
 def save_settings():
     write_json(SETTINGS_FILE, settings)
     log_action("change_setting", "HOST", "0.0.0.0", "settings.json", "N/A")
 
+
 def save_users():
     write_json(USERS_FILE, users)
+
 
 def trim_and_save_queue():
     if len(qstate.get("queue", [])) > MAX_QUEUE:
@@ -119,7 +135,12 @@ def trim_and_save_queue():
     qstate["last_saved"] = _now_iso()
     write_json(QUEUE_FILE, qstate)
 
+
+# ----- Flask app -----
 app = Flask(__name__, template_folder=TEMPLATES_DIR, static_folder=STATIC_DIR)
+
+
+# ===== Core routes (defined first) =====
 
 @app.post("/verify_host")
 def verify_host():
@@ -129,43 +150,29 @@ def verify_host():
         return jsonify({"ok": True})
     return jsonify({"ok": False}), 403
 
-# --- Compatibility route for frontend ---
-@app.post("/api/set_nickname")
-def api_set_nickname():
-    # Reuse the same logic as /set_nickname
-    return set_nickname()
-
-# --- Compatibility routes for legacy frontend paths (/api/...) ---
-@app.post("/api/host/verify")
-def api_verify_host():
-    data = request.get_json(silent=True) or request.form
-    pw = (data.get("password") or "").strip()
-    if hash_password(pw) == settings["system"]["password_hash"]:
-        return jsonify({"ok": True})
-    return jsonify({"ok": False}), 403
-
-@app.post("/api/set_nickname")
-def api_set_nickname():
-    # Reuse the same logic as /set_nickname
-    return set_nickname()
-
 
 @app.route("/")
 def user_page():
-    return render_template("user.html",
-                           settings=settings,
-                           queue=qstate.get("queue", []),
-                           history=qstate.get("history", []),
-                           version=settings["system"].get("version", "v01.6.2a"))
+    return render_template(
+        "user.html",
+        settings=settings,
+        queue=qstate.get("queue", []),
+        history=qstate.get("history", []),
+        version=settings["system"].get("version", "v01.6.2d"),
+    )
+
 
 @app.route("/host")
 def host_page():
-    return render_template("host.html",
-                           settings=settings,
-                           users=users,
-                           queue=qstate.get("queue", []),
-                           history=qstate.get("history", []),
-                           version=settings["system"].get("version", "v01.6.2a"))
+    return render_template(
+        "host.html",
+        settings=settings,
+        users=users,
+        queue=qstate.get("queue", []),
+        history=qstate.get("history", []),
+        version=settings["system"].get("version", "v01.6.2d"),
+    )
+
 
 @app.post("/set_nickname")
 def set_nickname():
@@ -194,7 +201,15 @@ def set_nickname():
         return jsonify({"ok": True, "message": "Nickname saved."})
     else:
         current = (old or {}).get("nickname", "Guest")
-        return jsonify({"ok": False, "message": "Cooldown active.", "remaining_seconds": remaining, "current": current}), 429
+        return jsonify(
+            {
+                "ok": False,
+                "message": "Cooldown active.",
+                "remaining_seconds": remaining,
+                "current": current,
+            }
+        ), 429
+
 
 @app.post("/submit")
 def submit():
@@ -217,6 +232,7 @@ def submit():
     log_action("submit", nickname, ip, title, url)
     return jsonify({"ok": True, "queued": entry})
 
+
 @app.post("/played")
 def played():
     if qstate["queue"]:
@@ -224,9 +240,16 @@ def played():
         item["played_at"] = _now_iso()
         qstate["history"].append(item)
         trim_and_save_queue()
-        log_action("played", item.get("by",""), item.get("ip",""), item.get("title",""), item.get("url",""))
+        log_action(
+            "played",
+            item.get("by", ""),
+            item.get("ip", ""),
+            item.get("title", ""),
+            item.get("url", ""),
+        )
         return jsonify({"ok": True, "moved": item})
     return jsonify({"ok": False, "error": "Queue empty"}), 400
+
 
 @app.post("/clear_queue")
 def clear_queue():
@@ -234,6 +257,7 @@ def clear_queue():
     trim_and_save_queue()
     log_action("clear_queue", "HOST", "0.0.0.0")
     return jsonify({"ok": True})
+
 
 @app.post("/update_settings")
 def update_settings():
@@ -253,28 +277,57 @@ def update_settings():
             sys["auto_clear_days"] = int(data["auto_clear_days"])
         except Exception:
             pass
+
     if "logo_url" in data:
         brand["logo_url"] = str(data["logo_url"])
     if "system_name" in data:
         brand["system_name"] = str(data["system_name"])
     if "slogan" in data:
         brand["slogan"] = str(data["slogan"])
+
     if "new_password" in data and data.get("new_password"):
         sys["password_hash"] = hash_password(data["new_password"])
 
     save_settings()
     return jsonify({"ok": True, "settings": settings})
 
+
 @app.get("/api/state")
 def api_state():
-    return jsonify({
-        "settings": settings,
-        "users": users,
-        "queue": qstate.get("queue", []),
-        "history": qstate.get("history", []),
-        "last_saved": qstate.get("last_saved")
-    })
+    return jsonify(
+        {
+            "settings": settings,
+            "users": users,
+            "queue": qstate.get("queue", []),
+            "history": qstate.get("history", []),
+            "last_saved": qstate.get("last_saved"),
+        }
+    )
 
+
+# ===== Compatibility routes for legacy frontend (/api/...) =====
+@app.post("/api/host/verify")
+def api_verify_host():
+    data = request.get_json(silent=True) or request.form
+    pw = (data.get("password") or "").strip()
+    if hash_password(pw) == settings["system"]["password_hash"]:
+        return jsonify({"ok": True})
+    return jsonify({"ok": False}), 403
+
+
+@app.post("/api/set_nickname")
+def api_set_nickname():
+    # Reuse same logic as /set_nickname
+    return set_nickname()
+
+
+@app.post("/api/update_settings")
+def api_update_settings():
+    # Reuse same logic as /update_settings
+    return update_settings()
+
+
+# ----- Entrypoint -----
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5000"))
     app.run(host="0.0.0.0", port=port, debug=False)
