@@ -128,6 +128,13 @@ def verify_host():
     if hash_password(pw) == settings["system"]["password_hash"]:
         return jsonify({"ok": True})
     return jsonify({"ok": False}), 403
+
+# --- Compatibility route for frontend ---
+@app.post("/api/set_nickname")
+def api_set_nickname():
+    # Reuse the same logic as /set_nickname
+    return set_nickname()
+
 # --- Compatibility routes for legacy frontend paths (/api/...) ---
 @app.post("/api/host/verify")
 def api_verify_host():
