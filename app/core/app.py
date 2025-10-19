@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
 """
 YouTube Queue | Web — Core Backend (Flask)
-Version: v01.6.2f (Render-Compatible + Secure + Full Compat)
+Version: v01.6.2g-hotfix
 Author: Duong – XDigital
 
-What's new in v01.6.2f:
-- Store data under /tmp/yqueue_data (writable on Render free tier).
-- Auto-migrate existing JSON/CSV from app/core/data -> /tmp/yqueue_data if present.
-- Keep all security/compat fixes from v01.6.2e (HOST_KEY, FormData support, compat /api/... routes).
+Highlights:
+- Render compatible storage: /tmp/yqueue_data (+ one-time migrate from app/core/data).
+- Secure: change password requires HOST_KEY.
+- Full frontend compatibility (/api/...).
+- Tolerant field names (nickname/name/username, masterKey/HOST_KEY/key, link/url, etc).
+- Atomic JSON writes with logs; queue/history trim; robust IP via X-Forwarded-For.
 """
 
 import os
@@ -18,15 +20,17 @@ from datetime import datetime, timedelta
 from hashlib import sha256
 from flask import Flask, request, jsonify, render_template
 
-# ----- Paths -----
+# =========================
+# Paths & data locations
+# =========================
 CORE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.abspath(os.path.join(CORE_DIR, os.pardir))
 TEMPLATES_DIR = os.path.join(APP_DIR, "templates")
 STATIC_DIR = os.path.join(APP_DIR, "static")
 
-# Old (read-only on Render): app/core/data
+# Old location (read-only on Render):
 LEGACY_DATA_DIR = os.path.join(CORE_DIR, "data")
-# New writable location: /tmp/yqueue_data  (or override via env YQUEUE_DATA_ROOT)
+# New writable location (Render free tier):
 DATA_ROOT = os.environ.get("YQUEUE_DATA_ROOT", "/tmp")
 DATA_DIR = os.path.join(DATA_ROOT, "yqueue_data")
 
@@ -39,16 +43,17 @@ MAX_QUEUE = 50
 MAX_HISTORY = 20
 
 
-# ----- Utils -----
+# =========================
+# Utilities
+# =========================
 def _now_iso():
     return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def ensure_dirs():
     os.makedirs(DATA_DIR, exist_ok=True)
-    # one-time migration from legacy read-only folder if target files missing
-    candidates = ["settings.json", "users.json", "queue.json", "activity_log.csv"]
-    for name in candidates:
+    # One-time migrate legacy files if present
+    for name in ["settings.json", "users.json", "queue.json", "activity_log.csv"]:
         src = os.path.join(LEGACY_DATA_DIR, name)
         dst = os.path.join(DATA_DIR, name)
         try:
@@ -68,7 +73,7 @@ def read_json(path, fallback):
 
 
 def write_json(path, obj):
-    """Atomic write + log so we can see success in Render Logs."""
+    """Atomic write with log (useful on Render logs)."""
     try:
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -83,23 +88,18 @@ def log_action(action, user, ip, title="N/A", url="N/A"):
     header = ["timestamp", "action", "user", "ip", "title", "url"]
     exists = os.path.exists(LOG_FILE)
     with open(LOG_FILE, "a", encoding="utf-8", newline="") as f:
-        writer = csv.writer(f)
+        w = csv.writer(f)
         if not exists:
-            writer.writerow(header)
-        writer.writerow([_now_iso(), action, user, ip, title, url])
+            w.writerow(header)
+        w.writerow([_now_iso(), action, user, ip, title, url])
 
 
 def client_ip():
     """Robust IP detection behind proxies (Render)."""
     try:
         forwarded = request.headers.get("X-Forwarded-For", "")
-        if forwarded:
-            ip = forwarded.split(",")[0].strip()
-        else:
-            ip = request.remote_addr or "0.0.0.0"
-        if not ip or ip == "None":
-            ip = "0.0.0.0"
-        return ip
+        ip = forwarded.split(",")[0].strip() if forwarded else (request.remote_addr or "0.0.0.0")
+        return ip if ip and ip != "None" else "0.0.0.0"
     except Exception:
         return "0.0.0.0"
 
@@ -108,7 +108,17 @@ def hash_password(pw: str) -> str:
     return sha256(pw.encode("utf-8")).hexdigest()
 
 
-# ----- Init data -----
+def get_first(data, *keys, default=""):
+    """Return the first non-empty value for keys in data (string-stripped)."""
+    for k in keys:
+        if k in data and data.get(k) not in (None, ""):
+            return (data.get(k) or "").strip()
+    return default
+
+
+# =========================
+# Init data
+# =========================
 ensure_dirs()
 print("[INFO] Data directory:", DATA_DIR)
 
@@ -117,9 +127,9 @@ default_settings = {
         "password_hash": hash_password("0000"),   # default host pass
         "host_key": "HOST_KEY",                   # required to change password
         "nickname_cooldown_hours": 1,
-        "auto_clear_days": 7,                     # configured (not enforced here)
+        "auto_clear_days": 7,                     # (policy value; enforcement off here)
         "theme": "dark",
-        "version": "v01.6.2f",
+        "version": "v01.6.2g",
     },
     "branding": {
         "logo_url": "/static/logo.png",
@@ -153,21 +163,13 @@ def trim_and_save_queue():
     write_json(QUEUE_FILE, qstate)
 
 
-# ----- Flask app -----
+# =========================
+# Flask app
+# =========================
 app = Flask(__name__, template_folder=TEMPLATES_DIR, static_folder=STATIC_DIR)
 
 
-# ===== Core routes (defined first) =====
-
-@app.post("/verify_host")
-def verify_host():
-    data = request.get_json(silent=True) or request.form or request.values
-    pw = (data.get("password") or "").strip()
-    if hash_password(pw) == settings["system"]["password_hash"]:
-        return jsonify({"ok": True})
-    return jsonify({"ok": False}), 403
-
-
+# ---------- Pages ----------
 @app.route("/")
 def user_page():
     return render_template(
@@ -175,7 +177,7 @@ def user_page():
         settings=settings,
         queue=qstate.get("queue", []),
         history=qstate.get("history", []),
-        version=settings["system"].get("version", "v01.6.2f"),
+        version=settings["system"].get("version", "v01.6.2g"),
     )
 
 
@@ -187,15 +189,25 @@ def host_page():
         users=users,
         queue=qstate.get("queue", []),
         history=qstate.get("history", []),
-        version=settings["system"].get("version", "v01.6.2f"),
+        version=settings["system"].get("version", "v01.6.2g"),
     )
+
+
+# ---------- Core APIs ----------
+@app.post("/verify_host")
+def verify_host():
+    data = request.get_json(silent=True) or request.form or request.values
+    pw = get_first(data, "password", "pass", "pwd")
+    if hash_password(pw) == settings["system"]["password_hash"]:
+        return jsonify({"ok": True})
+    return jsonify({"ok": False}), 403
 
 
 @app.post("/set_nickname")
 def set_nickname():
     ip = client_ip()
     data = request.get_json(silent=True) or request.form or request.values
-    nickname = (data.get("nickname") or "").strip()
+    nickname = get_first(data, "nickname", "name", "username")
     cooldown_h = settings["system"].get("nickname_cooldown_hours", 1)
 
     allowed = True
@@ -219,12 +231,7 @@ def set_nickname():
     else:
         current = (old or {}).get("nickname", "Guest")
         return jsonify(
-            {
-                "ok": False,
-                "message": "Cooldown active.",
-                "remaining_seconds": remaining,
-                "current": current,
-            }
+            {"ok": False, "message": "Cooldown active.", "remaining_seconds": remaining, "current": current}
         ), 429
 
 
@@ -232,8 +239,8 @@ def set_nickname():
 def submit():
     ip = client_ip()
     data = request.get_json(silent=True) or request.form or request.values
-    url = (data.get("url") or "").strip()
-    title = (data.get("title") or "").strip()
+    url = get_first(data, "url", "link")
+    title = get_first(data, "title", "name")
 
     if not url:
         return jsonify({"ok": False, "error": "Missing URL"}), 400
@@ -257,13 +264,7 @@ def played():
         item["played_at"] = _now_iso()
         qstate["history"].append(item)
         trim_and_save_queue()
-        log_action(
-            "played",
-            item.get("by", ""),
-            item.get("ip", ""),
-            item.get("title", ""),
-            item.get("url", ""),
-        )
+        log_action("played", item.get("by", ""), item.get("ip", ""), item.get("title", ""), item.get("url", ""))
         return jsonify({"ok": True, "moved": item})
     return jsonify({"ok": False, "error": "Queue empty"}), 400
 
@@ -282,28 +283,39 @@ def update_settings():
     sys = settings.setdefault("system", {})
     brand = settings.setdefault("branding", {})
 
-    if "nickname_cooldown_hours" in data:
+    # nickname cooldown (hours)
+    ncd = get_first(data, "nickname_cooldown_hours", default="")
+    if ncd:
         try:
-            sys["nickname_cooldown_hours"] = int(data["nickname_cooldown_hours"])
+            sys["nickname_cooldown_hours"] = int(ncd)
         except Exception:
             pass
-    if "theme" in data:
-        sys["theme"] = str(data["theme"])
-    if "auto_clear_days" in data:
+    # theme, auto_clear_days
+    theme = get_first(data, "theme", default="")
+    if theme:
+        sys["theme"] = theme
+    acd = get_first(data, "auto_clear_days", default="")
+    if acd:
         try:
-            sys["auto_clear_days"] = int(data["auto_clear_days"])
+            sys["auto_clear_days"] = int(acd)
         except Exception:
             pass
 
-    if "logo_url" in data:
-        brand["logo_url"] = str(data["logo_url"])
-    if "system_name" in data:
-        brand["system_name"] = str(data["system_name"])
-    if "slogan" in data:
-        brand["slogan"] = str(data["slogan"])
+    # branding
+    logo_url = get_first(data, "logo_url", default="")
+    if logo_url:
+        brand["logo_url"] = logo_url
+    sname = get_first(data, "system_name", default="")
+    if sname:
+        brand["system_name"] = sname
+    slog = get_first(data, "slogan", default="")
+    if slog:
+        brand["slogan"] = slog
 
-    if "new_password" in data and data.get("new_password"):
-        sys["password_hash"] = hash_password(data["new_password"])
+    # optional password update (not used by UI normally)
+    npw = get_first(data, "new_password", default="")
+    if npw:
+        sys["password_hash"] = hash_password(npw)
 
     save_settings()
     return jsonify({"ok": True, "settings": settings})
@@ -322,12 +334,11 @@ def api_state():
     )
 
 
-# ===== Compatibility routes for current frontend (/api/...) =====
-
+# ---------- Compat APIs for current frontend ----------
 @app.post("/api/host/verify")
 def api_verify_host():
     data = request.get_json(silent=True) or request.form or request.values
-    pw = (data.get("password") or "").strip()
+    pw = get_first(data, "password", "pass", "pwd")
     if hash_password(pw) == settings["system"]["password_hash"]:
         return jsonify({"ok": True})
     return jsonify({"ok": False}), 403
@@ -358,13 +369,11 @@ def api_nickname_get():
 
 @app.post("/api/nickname")
 def api_nickname_post():
-    # Reuse exact logic of /set_nickname
     return set_nickname()
 
 
 @app.post("/api/add")
 def api_add():
-    # Reuse submit() logic and adapt the response shape if needed by UI
     resp = submit()
     if isinstance(resp, tuple):
         payload, status = resp
@@ -394,8 +403,8 @@ def api_update_settings():
 
 @app.post("/api/logo")
 def api_logo():
-    # host.js uploads FormData with key "logo"
-    f = request.files.get("logo")
+    # Allow common keys
+    f = request.files.get("logo") or request.files.get("file") or request.files.get("image")
     if not f:
         return jsonify({"ok": False, "error": "No file uploaded"}), 400
 
@@ -416,19 +425,25 @@ def api_logo():
 def api_config():
     data = request.get_json(silent=True) or request.form or request.values
     sys = settings.setdefault("system", {})
-    if "rate_limit_s" in data:
+
+    # submit limit seconds
+    limit_s = get_first(data, "rate_limit_s", "limitSeconds", "submit_limit")
+    if limit_s:
         try:
-            sys["rate_limit_s"] = int(data["rate_limit_s"])
+            sys["rate_limit_s"] = int(limit_s)
         except Exception:
             pass
-    if "nickname_valid_minutes" in data:
+
+    # nickname valid minutes
+    nick_mins = get_first(data, "nickname_valid_minutes", "nicknameValidMinutes", "nickname_limit_min")
+    if nick_mins:
         try:
-            mins = int(data["nickname_valid_minutes"])
-            # keep backend canonical hours but also store minutes for UI convenience
+            mins = int(nick_mins)
             sys["nickname_cooldown_hours"] = max(1, int(round(mins / 60.0)))
             sys["nickname_valid_minutes"] = mins
         except Exception:
             pass
+
     save_settings()
     return jsonify({
         "ok": True,
@@ -440,9 +455,9 @@ def api_config():
 @app.post("/api/host/change_password")
 def api_host_change_password():
     data = request.get_json(silent=True) or request.form or request.values
-    old_pw = (data.get("old_password") or "").strip()
-    new_pw = (data.get("new_password") or "").strip()
-    host_key = (data.get("key") or "").strip()
+    old_pw = get_first(data, "old_password", "old", "current_password")
+    new_pw = get_first(data, "new_password", "new", "password")
+    host_key = get_first(data, "key", "HOST_KEY", "host_key", "masterKey")
 
     sys = settings.setdefault("system", {})
     stored_hash = sys.get("password_hash")
@@ -460,7 +475,7 @@ def api_host_change_password():
     return jsonify({"ok": True})
 
 
-# ----- Entrypoint -----
+# ---------- Entrypoint ----------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5000"))
     app.run(host="0.0.0.0", port=port, debug=False)
