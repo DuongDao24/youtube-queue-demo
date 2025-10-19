@@ -1,20 +1,19 @@
 # -*- coding: utf-8 -*-
 """
 YouTube Queue | Web — Core Backend (Flask)
-Version: v01.6.2e (Secure + Full Compat)
+Version: v01.6.2f (Render-Compatible + Secure + Full Compat)
 Author: Duong – XDigital
 
-What's new in v01.6.2e:
-- Secure: /api/host/change_password now requires HOST_KEY.
-- Nickname POST accepts FormData (request.form / request.values).
-- Full compat routes for current frontend (/api/...).
-- Render-safe IP detection, atomic JSON writes with logs.
-- Persistent JSON storage + CSV activity log; trim Queue<=50, History<=20.
+What's new in v01.6.2f:
+- Store data under /tmp/yqueue_data (writable on Render free tier).
+- Auto-migrate existing JSON/CSV from app/core/data -> /tmp/yqueue_data if present.
+- Keep all security/compat fixes from v01.6.2e (HOST_KEY, FormData support, compat /api/... routes).
 """
 
 import os
 import json
 import csv
+import shutil
 from datetime import datetime, timedelta
 from hashlib import sha256
 from flask import Flask, request, jsonify, render_template
@@ -24,7 +23,12 @@ CORE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.abspath(os.path.join(CORE_DIR, os.pardir))
 TEMPLATES_DIR = os.path.join(APP_DIR, "templates")
 STATIC_DIR = os.path.join(APP_DIR, "static")
-DATA_DIR = os.path.join(CORE_DIR, "data")
+
+# Old (read-only on Render): app/core/data
+LEGACY_DATA_DIR = os.path.join(CORE_DIR, "data")
+# New writable location: /tmp/yqueue_data  (or override via env YQUEUE_DATA_ROOT)
+DATA_ROOT = os.environ.get("YQUEUE_DATA_ROOT", "/tmp")
+DATA_DIR = os.path.join(DATA_ROOT, "yqueue_data")
 
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
 USERS_FILE = os.path.join(DATA_DIR, "users.json")
@@ -42,6 +46,17 @@ def _now_iso():
 
 def ensure_dirs():
     os.makedirs(DATA_DIR, exist_ok=True)
+    # one-time migration from legacy read-only folder if target files missing
+    candidates = ["settings.json", "users.json", "queue.json", "activity_log.csv"]
+    for name in candidates:
+        src = os.path.join(LEGACY_DATA_DIR, name)
+        dst = os.path.join(DATA_DIR, name)
+        try:
+            if os.path.exists(src) and not os.path.exists(dst):
+                shutil.copy2(src, dst)
+                print(f"[INFO] Migrated {name} -> {DATA_DIR}")
+        except Exception as e:
+            print(f"[WARN] Could not migrate {name}: {e}")
 
 
 def read_json(path, fallback):
@@ -95,15 +110,16 @@ def hash_password(pw: str) -> str:
 
 # ----- Init data -----
 ensure_dirs()
+print("[INFO] Data directory:", DATA_DIR)
 
 default_settings = {
     "system": {
         "password_hash": hash_password("0000"),   # default host pass
-        "host_key": "HOST_KEY",                   # security key required to change password
+        "host_key": "HOST_KEY",                   # required to change password
         "nickname_cooldown_hours": 1,
         "auto_clear_days": 7,                     # configured (not enforced here)
         "theme": "dark",
-        "version": "v01.6.2e",
+        "version": "v01.6.2f",
     },
     "branding": {
         "logo_url": "/static/logo.png",
@@ -159,7 +175,7 @@ def user_page():
         settings=settings,
         queue=qstate.get("queue", []),
         history=qstate.get("history", []),
-        version=settings["system"].get("version", "v01.6.2e"),
+        version=settings["system"].get("version", "v01.6.2f"),
     )
 
 
@@ -171,7 +187,7 @@ def host_page():
         users=users,
         queue=qstate.get("queue", []),
         history=qstate.get("history", []),
-        version=settings["system"].get("version", "v01.6.2e"),
+        version=settings["system"].get("version", "v01.6.2f"),
     )
 
 
