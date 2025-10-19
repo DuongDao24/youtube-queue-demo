@@ -1,15 +1,20 @@
 # -*- coding: utf-8 -*-
 """
 YouTube Queue | Web — Core Backend (Flask)
-Version: v01.6.2d (Stable on Render)
+Version: v01.6.2d (Stable + Full Compat)
 Author: Duong – XDigital
 
 CHANGELOG (v01.6.2d):
-- Added /api/update_settings (compat for logo/password updates).
-- Kept /api/host/verify and /api/set_nickname (compat for old frontend).
+- Kept previous fixes (Render-safe IP detection, atomic JSON writes, queue/history trim).
+- Added full compatibility routes for current frontend:
+  * /api/host/verify  (host login)
+  * /api/nickname  (GET/POST nickname)
+  * /api/add        (enqueue video)
+  * /api/update_settings (logo, system configs, password)
+  * /api/logo       (logo upload -> /static/uploads/)
+  * /api/config     (save UI config: rate_limit_s, nickname_valid_minutes)
+  * /api/host/change_password
 - Ordered route definitions to avoid early references.
-- Render-safe IP detection and safe JSON writes with info logs.
-- Persistent JSON + CSV log; auto-trim Queue<=50, History<=20 (auto-clear disabled).
 """
 
 import os
@@ -100,7 +105,7 @@ default_settings = {
     "system": {
         "password_hash": hash_password("0000"),  # default host pass
         "nickname_cooldown_hours": 1,
-        "auto_clear_days": 7,  # configured but NOT enforced
+        "auto_clear_days": 7,  # configured but NOT enforced in code
         "theme": "dark",
         "version": "v01.6.2d",
     },
@@ -305,7 +310,8 @@ def api_state():
     )
 
 
-# ===== Compatibility routes for legacy frontend (/api/...) =====
+# ===== Compatibility routes for current frontend (/api/...) =====
+
 @app.post("/api/host/verify")
 def api_verify_host():
     data = request.get_json(silent=True) or request.form
@@ -315,16 +321,124 @@ def api_verify_host():
     return jsonify({"ok": False}), 403
 
 
-@app.post("/api/set_nickname")
-def api_set_nickname():
-    # Reuse same logic as /set_nickname
+@app.get("/api/nickname")
+def api_nickname_get():
+    ip = client_ip()
+    cooldown_h = settings["system"].get("nickname_cooldown_hours", 1)
+    limit_mins = cooldown_h * 60
+    u = users.get(ip)
+    valid = False
+    remain_mins = 0
+    name = None
+    if u and u.get("last_changed"):
+        try:
+            last_dt = datetime.strptime(u["last_changed"], "%Y-%m-%dT%H:%M:%SZ")
+            delta = datetime.utcnow() - last_dt
+            remain = timedelta(hours=cooldown_h) - delta
+            if remain.total_seconds() > 0:
+                valid = True
+                remain_mins = max(0, int(remain.total_seconds() // 60))
+                name = u.get("nickname")
+        except Exception:
+            pass
+    return jsonify({"ok": True, "valid": valid, "name": name, "remain_mins": remain_mins, "limit_mins": limit_mins})
+
+
+@app.post("/api/nickname")
+def api_nickname_post():
+    # Reuse exact logic of /set_nickname
     return set_nickname()
+
+
+@app.post("/api/add")
+def api_add():
+    # Reuse submit() logic and adapt the response shape if needed by UI
+    resp = submit()
+    if isinstance(resp, tuple):
+        payload, status = resp
+        try:
+            data = payload.get_json()
+        except Exception:
+            return resp
+        if data and data.get("ok"):
+            item = data.get("queued")
+            return jsonify({"ok": True, "item": item, "queued": item}), status
+        return resp
+    else:
+        try:
+            data = resp.get_json()
+        except Exception:
+            return resp
+        if data and data.get("ok"):
+            item = data.get("queued")
+            return jsonify({"ok": True, "item": item, "queued": item})
+        return resp
 
 
 @app.post("/api/update_settings")
 def api_update_settings():
-    # Reuse same logic as /update_settings
     return update_settings()
+
+
+@app.post("/api/logo")
+def api_logo():
+    # host.js uploads FormData with key "logo"
+    f = request.files.get("logo")
+    if not f:
+        return jsonify({"ok": False, "error": "No file uploaded"}), 400
+
+    uploads_dir = os.path.join(STATIC_DIR, "uploads")
+    os.makedirs(uploads_dir, exist_ok=True)
+
+    ext = os.path.splitext(f.filename or "")[1] or ".png"
+    fname = f"logo_{int(datetime.utcnow().timestamp())}{ext}"
+    save_path = os.path.join(uploads_dir, fname)
+    f.save(save_path)
+
+    settings.setdefault("branding", {})["logo_url"] = f"/static/uploads/{fname}"
+    save_settings()
+    return jsonify({"ok": True, "logo_url": settings["branding"]["logo_url"]})
+
+
+@app.post("/api/config")
+def api_config():
+    data = request.get_json(silent=True) or {}
+    sys = settings.setdefault("system", {})
+    if "rate_limit_s" in data:
+        try:
+            sys["rate_limit_s"] = int(data["rate_limit_s"])
+        except Exception:
+            pass
+    if "nickname_valid_minutes" in data:
+        try:
+            mins = int(data["nickname_valid_minutes"])
+            # keep backend canonical hours but also store minutes for UI convenience
+            sys["nickname_cooldown_hours"] = max(1, int(round(mins / 60.0)))
+            sys["nickname_valid_minutes"] = mins
+        except Exception:
+            pass
+    save_settings()
+    return jsonify({
+        "ok": True,
+        "rate_limit_s": sys.get("rate_limit_s", 180),
+        "nickname_valid_minutes": sys.get("nickname_valid_minutes", sys.get("nickname_cooldown_hours", 1) * 60),
+    })
+
+
+@app.post("/api/host/change_password")
+def api_host_change_password():
+    data = request.get_json(silent=True) or {}
+    old_pw = (data.get("old_password") or "").strip()
+    new_pw = (data.get("new_password") or "").strip()
+
+    if not new_pw:
+        return jsonify({"ok": False, "error": "New password required"}), 400
+    if hash_password(old_pw) != settings["system"].get("password_hash"):
+        return jsonify({"ok": False, "error": "Old password incorrect"}), 403
+
+    settings["system"]["password_hash"] = hash_password(new_pw)
+    save_settings()
+    return jsonify({"ok": True})
 
 
 # ----- Entrypoint -----
