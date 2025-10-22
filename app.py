@@ -1,11 +1,15 @@
 # =========================================================
-# YouTube Queue Online — v01.6.2a (FULL + Chat realtime)
+# YouTube Queue Online — v01.6.2d (FULL + Chat realtime)
 # Date: 2025-10-23
-# Changes (vs v01.6.1):
-# - Keep all existing logic & routes intact (queue, nickname, settings, logo, host auth)
-# - Add Flask-SocketIO for realtime chat (very small additions)
-# - Default host password remains "0000" (as in your v01.6.2a build)
-# - If running directly: use socketio.run(); if using Procfile with gunicorn -k eventlet, OK
+#
+# What changed vs v01.6.2a:
+# - Keep all existing logic/routes intact (queue, nickname, settings, logo, host auth)
+# - Flask-SocketIO: single definitive chat handler + debug print
+# - Note: the Socket.IO client file is NOT served at /socket.io/socket.io.js.
+#         In templates use CDN, e.g.:
+#         <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"
+#                 integrity="sha384-Q96P8w4r4f1QpFthYvQ3VY6dH6s7Yx+JmJxL9k+ZCw1Yt+3y4t9nqz3l5lRj+3vM"
+#                 crossorigin="anonymous"></script>
 # =========================================================
 
 import os, json, time, re, hashlib
@@ -15,8 +19,8 @@ from flask import Flask, request, jsonify, render_template, redirect
 from werkzeug.utils import secure_filename
 import requests
 
-# v01.6.2a — Chat (SocketIO)
-from flask_socketio import SocketIO, emit  # <-- added
+# Realtime chat
+from flask_socketio import SocketIO, emit
 
 APP_TITLE       = os.environ.get("APP_TITLE", "YouTube Queue Online")
 HOST_API_KEY    = os.environ.get("HOST_API_KEY", "ytp-premium-2025-dxd")
@@ -28,10 +32,7 @@ STATIC_DIR      = os.path.join(os.path.dirname(__file__), "static")
 ALLOWED_LOGO_EXT = {".png", ".jpg", ".jpeg", ".gif"}
 
 app = Flask(__name__)
-
-# v01.6.2a — Chat (SocketIO)
-# Note: This creates /socket.io endpoint; works with Procfile: "gunicorn -k eventlet -w 1 app:app"
-socketio = SocketIO(app, cors_allowed_origins="*")  # <-- added
+socketio = SocketIO(app, cors_allowed_origins="*")  # exposes /socket.io/ transport (not the client js)
 
 # ------------------ Runtime state ------------------
 queue = deque()
@@ -40,12 +41,11 @@ current = None
 last_submit_ts = {}
 last_progress = {"videoId": None, "pos": 0, "dur": 0, "ts": 0, "ended": False}
 
-# ------------------ Config (with default host pass "0000") ------------------
+# ------------------ Config (default host pass "0000") ------------------
 config = {
     "rate_limit_s": ENV_RATE_LIMIT,
     "logo_path": None,
     "nickname_valid_minutes": 60,
-    # v01.6.2a: default host password = "0000"
     "host_password_hash": hashlib.sha256("0000".encode()).hexdigest(),
 }
 
@@ -97,13 +97,7 @@ def load_state():
             current = data.get("current")
             if current:
                 last_progress.update(
-                    {
-                        "videoId": current.get("id"),
-                        "pos": 0,
-                        "dur": 0,
-                        "ts": time.time(),
-                        "ended": False,
-                    }
+                    {"videoId": current.get("id"), "pos": 0, "dur": 0, "ts": time.time(), "ended": False}
                 )
         except Exception as e:
             print("load_state error:", e)
@@ -111,12 +105,7 @@ def load_state():
 def save_state():
     try:
         with open(PERSIST_PATH, "w", encoding="utf-8") as f:
-            json.dump(
-                {"queue": list(queue), "history": list(history), "current": current},
-                f,
-                ensure_ascii=False,
-                indent=2,
-            )
+            json.dump({"queue": list(queue), "history": list(history), "current": current}, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print("save_state error:", e)
 
@@ -130,7 +119,6 @@ def load_config():
                 config["rate_limit_s"] = int(data.get("rate_limit_s", ENV_RATE_LIMIT))
                 config["logo_path"] = data.get("logo_path")
                 config["nickname_valid_minutes"] = int(data.get("nickname_valid_minutes", 60))
-                # keep default 0000 unless a hash exists in config.json
                 if data.get("host_password_hash"):
                     config["host_password_hash"] = data.get("host_password_hash")
         except Exception as e:
@@ -148,7 +136,7 @@ def load_nicks():
     if os.path.exists(NICK_PATH):
         try:
             with open(NICK_PATH, "r", encoding="utf-8") as f:
-                raw = f.read().strip() or "{}"  # tolerate empty file
+                raw = f.read().strip() or "{}"
                 nicknames = json.loads(raw)
         except Exception as e:
             print("load_nicks error:", e)
@@ -224,21 +212,11 @@ def root_redirect():
 
 @app.route("/user")
 def page_user():
-    return render_template(
-        "user.html",
-        app_title=APP_TITLE,
-        rate_limit_s=get_rate_limit_s(),
-        logo_url=get_logo_url(),
-    )
+    return render_template("user.html", app_title=APP_TITLE, rate_limit_s=get_rate_limit_s(), logo_url=get_logo_url())
 
 @app.route("/host")
 def page_host():
-    return render_template(
-        "host.html",
-        app_title=APP_TITLE,
-        logo_url=get_logo_url(),
-        host_key=HOST_API_KEY,
-    )
+    return render_template("host.html", app_title=APP_TITLE, logo_url=get_logo_url(), host_key=HOST_API_KEY)
 
 # ------------------ Nickname APIs ------------------
 @app.route("/api/nickname", methods=["GET", "POST"])
@@ -246,27 +224,11 @@ def api_nickname():
     ip = client_ip()
     if request.method == "GET":
         valid, name, remain = is_nickname_valid(ip)
-        return jsonify(
-            {
-                "ok": True,
-                "valid": valid,
-                "name": name,
-                "remain_mins": remain,
-                "limit_mins": get_nick_valid_minutes(),
-            }
-        )
+        return jsonify({"ok": True, "valid": valid, "name": name, "remain_mins": remain, "limit_mins": get_nick_valid_minutes()})
     data = request.get_json(silent=True) or {}
     name = (data.get("name") or "").strip()
     if not validate_nickname(name):
-        return (
-            jsonify(
-                {
-                    "ok": False,
-                    "error": "Nickname must be 3-15 characters, letters/digits or icons.",
-                }
-            ),
-            400,
-        )
+        return jsonify({"ok": False, "error": "Nickname must be 3-15 characters, letters/digits or icons."}), 400
     nicknames[ip] = {"name": name, "set_ts": time.time()}
     save_nicks()
     return jsonify({"ok": True, "name": name, "limit_mins": get_nick_valid_minutes()})
@@ -294,7 +256,7 @@ def api_state():
         }
     )
 
-# ------------------ Add video (require nickname) ------------------
+# ------------------ Add video ------------------
 @app.route("/api/add", methods=["POST"])
 def api_add():
     data = request.get_json(silent=True) or {}
@@ -312,10 +274,7 @@ def api_add():
 
     vid = extract_youtube_id(url)
     if not vid:
-        return (
-            jsonify({"ok": False, "error": "Paste a YouTube video link (not playlist)."}),
-            400,
-        )
+        return jsonify({"ok": False, "error": "Paste a YouTube video link (not playlist)."}), 400
 
     title = fetch_title(vid)
     item = {"id": vid, "title": title, "by_name": name, "by_ip": ip, "ts": int(now)}
@@ -332,13 +291,7 @@ def api_add():
 @app.route("/api/config", methods=["GET", "POST"])
 def api_config():
     if request.method == "GET":
-        return jsonify(
-            {
-                "rate_limit_s": get_rate_limit_s(),
-                "nickname_valid_minutes": get_nick_valid_minutes(),
-                "logo_url": get_logo_url(),
-            }
-        )
+        return jsonify({"rate_limit_s": get_rate_limit_s(), "nickname_valid_minutes": get_nick_valid_minutes(), "logo_url": get_logo_url()})
 
     unauth = require_host_key()
     if unauth:
@@ -369,14 +322,7 @@ def api_config():
 
     if updated:
         save_config()
-    return jsonify(
-        {
-            "ok": True,
-            "rate_limit_s": get_rate_limit_s(),
-            "nickname_valid_minutes": get_nick_valid_minutes(),
-            "logo_url": get_logo_url(),
-        }
-    )
+    return jsonify({"ok": True, "rate_limit_s": get_rate_limit_s(), "nickname_valid_minutes": get_nick_valid_minutes(), "logo_url": get_logo_url()})
 
 # ------------------ Logo upload ------------------
 @app.route("/api/logo", methods=["POST"])
@@ -428,13 +374,7 @@ def api_play():
         if current:
             history.appendleft(current)
         title = fetch_title(vid)
-        current = {
-            "id": vid,
-            "title": title,
-            "by_name": "host",
-            "by_ip": "host",
-            "ts": int(time.time()),
-        }
+        current = {"id": vid, "title": title, "by_name": "host", "by_ip": "host", "ts": int(time.time())}
         save_state()
     else:
         if not current:
@@ -484,7 +424,6 @@ def api_remove():
     if not vid:
         return jsonify({"ok": False}), 400
     from collections import deque as dq
-
     global queue
     newq, removed = dq(), False
     for it in list(queue):
@@ -558,7 +497,7 @@ def healthz():
 # payload example: { "user": "Thảo", "role": "host"|"user", "msg": "😊", "timestamp": "..." }
 @socketio.on('chat_message')
 def on_chat_message(data):
-    # Minimal: broadcast as-is. You can add length checks / sanitize if needed.
+    print("💬 Received chat:", data)  # debug log to Render logs
     emit('chat_message', data, broadcast=True)
 
 # ------------------ Boot ------------------
@@ -570,11 +509,6 @@ def boot():
 boot()
 
 if __name__ == "__main__":
-    # If running directly (eg. local dev), use socketio.run to enable websockets.
-    # On Render with Procfile "gunicorn -k eventlet -w 1 app:app", this block is not used.
+    # Local dev: this enables WebSocket.
+    # On Render, keep Procfile: "web: gunicorn -k eventlet -w 1 app:app"
     socketio.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=False)
-
-@socketio.on('chat_message')
-def on_chat_message(data):
-    print("💬 Received chat:", data)  # <-- debug line
-    emit('chat_message', data, broadcast=True)
