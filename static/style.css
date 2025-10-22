@@ -206,3 +206,7 @@ body.blurred > div:not(#lockOverlay) {
   text-overflow: ellipsis;
   white-space: normal;
 }
+
+/* v01.6 — Chat UI (optional, không đổi layout cũ) */
+#chat-section h3 { margin: 0 0 8px 0; }
+#chat-box { font-size: 14px; line-height: 1.4; }
