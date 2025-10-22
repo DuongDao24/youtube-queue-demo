@@ -247,73 +247,73 @@ refresh();
 setInterval(refresh, 2000);
 
 /* =========================================================
-   v01.6.2b — 2025-10-23 — Chat Fix
-   - Sửa lỗi: nút "Gửi 💬" không hoạt động do JS chạy trước DOM
-   - Bổ sung: nhấn phím Enter cũng gửi được tin nhắn
-   - Giữ nguyên style và logic cũ
+   v01.6.2c — 2025-10-23 — Chat Fix (Host)
+   - Đảm bảo socket.io/DOM đã sẵn sàng, có retry
+   - Click & Enter để gửi
+   - Không ảnh hưởng logic khác
 ========================================================= */
-
-window.addEventListener('DOMContentLoaded', () => {
-  if (typeof io === 'undefined') return; // chưa load socket.io ⇒ bỏ qua
-
-  const socket = io();
-
-  const chatBox = document.getElementById('chat-box');
-  const chatInput = document.getElementById('chat-input');
-  const sendBtn = document.getElementById('send-btn');
-
-  if (!chatBox || !chatInput || !sendBtn) return;
-
-  // Escape HTML
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, c => ({
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#39;'
-    })[c]);
-  }
-
-  function getNickname() {
-    try {
-      const ls = localStorage.getItem('nickname');
-      if (ls && ls.trim()) return ls.trim();
-    } catch (e) {}
-    return 'Host';
-  }
-
-  // Nhận tin nhắn broadcast
-  socket.on('chat_message', (data) => {
-    const nameTag = data.role === 'host'
-      ? `<strong style="color:#2563eb;">[HOST]</strong> ${escapeHtml(data.user)}`
-      : `<strong>${escapeHtml(data.user)}</strong>`;
-    const row = document.createElement('div');
-    row.style.marginBottom = '6px';
-    row.innerHTML = `${nameTag}: ${escapeHtml(data.msg)}`;
-    chatBox.appendChild(row);
-    chatBox.scrollTop = chatBox.scrollHeight;
-  });
-
-  // Hàm gửi tin
-  function sendMessage() {
-    const text = (chatInput.value || '').trim();
-    if (!text) return;
-    socket.emit('chat_message', {
-      user: getNickname(),
-      role: (window.IS_HOST ? 'host' : 'user'),
-      msg: text,
-      timestamp: new Date().toISOString()
-    });
-    chatInput.value = '';
-  }
-
-  // Gắn sự kiện Click và Enter
-  sendBtn.addEventListener('click', sendMessage);
-  chatInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault(); // tránh xuống dòng
-      sendMessage();
+document.addEventListener('DOMContentLoaded', function () {
+  function initChat() {
+    if (typeof io === 'undefined') {
+      console.warn('⚠️ Socket.IO chưa load, thử lại sau 1s...');
+      return setTimeout(initChat, 1000);
     }
-  });
+
+    const socket = io();
+    const chatBox = document.getElementById('chat-box');
+    const chatInput = document.getElementById('chat-input');
+    const sendBtn = document.getElementById('send-btn');
+    if (!chatBox || !chatInput || !sendBtn) {
+      console.warn('Chat DOM chưa sẵn sàng, đợi thêm 1s...');
+      return setTimeout(initChat, 1000);
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      })[c]);
+    }
+    function getNickname() {
+      try {
+        const ls = localStorage.getItem('nickname');
+        if (ls && ls.trim()) return ls.trim();
+      } catch (e) {}
+      return 'Host';
+    }
+
+    socket.on('chat_message', (data) => {
+      const nameTag = data.role === 'host'
+        ? `<strong style="color:#2563eb;">[HOST]</strong> ${escapeHtml(data.user)}`
+        : `<strong>${escapeHtml(data.user)}</strong>`;
+      const row = document.createElement('div');
+      row.style.marginBottom = '6px';
+      row.innerHTML = `${nameTag}: ${escapeHtml(data.msg)}`;
+      chatBox.appendChild(row);
+      chatBox.scrollTop = chatBox.scrollHeight;
+    });
+
+    function sendMessage() {
+      const text = (chatInput.value || '').trim();
+      if (!text) return;
+      socket.emit('chat_message', {
+        user: getNickname(),
+        role: (window.IS_HOST ? 'host' : 'user'),
+        msg: text,
+        timestamp: new Date().toISOString()
+      });
+      chatInput.value = '';
+    }
+
+    sendBtn.onclick = sendMessage;
+    chatInput.onkeydown = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        sendMessage();
+      }
+    };
+
+    console.log('✅ Chat initialized (Host)');
+  }
+
+  initChat();
 });
