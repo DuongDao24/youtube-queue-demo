@@ -573,3 +573,8 @@ if __name__ == "__main__":
     # If running directly (eg. local dev), use socketio.run to enable websockets.
     # On Render with Procfile "gunicorn -k eventlet -w 1 app:app", this block is not used.
     socketio.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=False)
+
+@socketio.on('chat_message')
+def on_chat_message(data):
+    print("💬 Received chat:", data)  # <-- debug line
+    emit('chat_message', data, broadcast=True)
