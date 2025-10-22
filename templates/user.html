@@ -1,8 +1,11 @@
 <!-- =========================================================
-YouTube Queue Online — v01.6.1
-Ngày cập nhật: 17/10/2025
-Loại cập nhật: UI Neumorphism (chỉ thay đổi hiển thị)
-Thay đổi: thêm class .neu-card, .neu-inset, .neu-btn, .neu-item, progress inset
+YouTube Queue Online — v01.6.2a
+Ngày cập nhật: 23/10/2025
+Loại cập nhật: + Chat realtime (Flask-SocketIO) cho trang User
+Thay đổi tối thiểu, giữ nguyên layout/thiết kế hiện tại:
+- Thêm khối UI Chat (neu-card) ở cuối trang (sau History)
+- Thêm script Socket.IO client
+- KHÔNG thay đổi phần Add video / Now playing / Queue / History
 ========================================================= -->
 <!doctype html>
 <html>
@@ -25,18 +28,18 @@ Thay đổi: thêm class .neu-card, .neu-inset, .neu-btn, .neu-item, progress in
       <h1 class="text-3xl font-bold">{{ app_title }}</h1>
     </div>
 
-      <!-- Nickname box -->
-      <div class="neu-card section stack">
-        <h2 class="font-semibold">Your nickname</h2>
-      
-        <div id="nickInfo" class="small"></div>
-      
-        <form id="nickForm" class="flex items-center gap-3">
-          <input id="nickInput" class="neu-inset px-3 py-2" placeholder="Enter nickname (3–15 chars)" maxlength="15" required>
-          <button id="nickSave" class="neu-btn">Save name</button>
-        </form>
-        <div id="nickMsg" class="small"></div>
-      </div>
+    <!-- Nickname box -->
+    <div class="neu-card section stack">
+      <h2 class="font-semibold">Your nickname</h2>
+
+      <div id="nickInfo" class="small"></div>
+
+      <form id="nickForm" class="flex items-center gap-3">
+        <input id="nickInput" class="neu-inset px-3 py-2" placeholder="Enter nickname (3–15 chars)" maxlength="15" required>
+        <button id="nickSave" class="neu-btn">Save name</button>
+      </form>
+      <div id="nickMsg" class="small"></div>
+    </div>
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
       <!-- Add form -->
@@ -80,7 +83,26 @@ Thay đổi: thêm class .neu-card, .neu-inset, .neu-btn, .neu-item, progress in
       <h2 class="font-semibold mb-3">History</h2>
       <div id="history" class="list"></div>
     </div>
+
+    <!-- =========================
+         v01.6.2a — Chat UI (User)
+         ========================= -->
+    <div class="neu-card section">
+      <h2 class="font-semibold mb-3">💬 Chat</h2>
+      <div id="chat-box" class="neu-inset" style="height:250px; overflow-y:auto; padding:10px;"></div>
+      <div class="stack" style="margin-top:10px;">
+        <div style="display:flex; gap:8px;">
+          <input id="chat-input" class="neu-inset" placeholder="Gửi tin nhắn..." style="flex:1;">
+          <button id="send-btn" class="btn btn-primary">Gửi 💬</button>
+        </div>
+      </div>
+    </div>
+    <!-- ===== end Chat UI ===== -->
+
   </div>
+
+  <!-- v01.6.2a — Socket.IO client (realtime) -->
+  <script src="/socket.io/socket.io.js"></script>
 
   <script src="/static/app.js"></script>
 </body>
