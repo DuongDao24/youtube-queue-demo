@@ -245,3 +245,65 @@ if (btnChange) {
 // Kick things off
 refresh();
 setInterval(refresh, 2000);
+
+/* =========================================================
+   v01.6.2a — 2025-10-23 — Chat (Host)
+   Bổ sung cực nhẹ: kết nối Socket.IO + gửi/nhận tin nhắn
+   - Không ảnh hưởng logic player/queue/settings hiện có
+   - Yêu cầu: host.html đã có <script src="/socket.io/socket.io.js"></script> và window.IS_HOST = true
+========================================================= */
+(function () {
+  if (typeof io === 'undefined') return; // socket.io chưa được load ⇒ bỏ qua an toàn
+
+  const socket = io();
+
+  // DOM targets (nếu trang không có chat UI, an toàn bỏ qua)
+  const chatBox = document.getElementById('chat-box');
+  const chatInput = document.getElementById('chat-input');
+  const sendBtn = document.getElementById('send-btn');
+
+  if (!chatBox || !chatInput || !sendBtn) return;
+
+  // Escape HTML đơn giản
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    })[c]);
+  }
+
+  function getNickname() {
+    try {
+      const ls = localStorage.getItem('nickname');
+      if (ls && ls.trim()) return ls.trim();
+    } catch(e){}
+    return 'Host';
+  }
+
+  // Nhận broadcast
+  socket.on('chat_message', (data) => {
+    const nameTag = data.role === 'host'
+      ? `<strong style="color:#2563eb;">[HOST]</strong> ${escapeHtml(data.user)}`
+      : `<strong>${escapeHtml(data.user)}</strong>`;
+    const row = document.createElement('div');
+    row.style.marginBottom = '6px';
+    row.innerHTML = `${nameTag}: ${escapeHtml(data.msg)}`;
+    chatBox.appendChild(row);
+    chatBox.scrollTop = chatBox.scrollHeight;
+  });
+
+  // Gửi
+  function send() {
+    const txt = (chatInput.value || '').trim();
+    if (!txt) return;
+    socket.emit('chat_message', {
+      user: getNickname(),
+      role: (window.IS_HOST ? 'host' : 'user'),
+      msg: txt,
+      timestamp: new Date().toISOString()
+    });
+    chatInput.value = '';
+  }
+
+  sendBtn.addEventListener('click', send);
+  chatInput.addEventListener('keydown', (e)=>{ if (e.key === 'Enter') send(); });
+})();
