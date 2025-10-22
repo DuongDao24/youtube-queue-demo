@@ -1,3 +1,6 @@
 flask==3.0.3
 requests==2.32.3
 gunicorn==21.2.0
+# v01.6 — 2025-10-23 — Chat (SocketIO)
+flask-socketio
+eventlet
