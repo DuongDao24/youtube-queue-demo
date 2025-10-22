@@ -247,27 +247,31 @@ refresh();
 setInterval(refresh, 2000);
 
 /* =========================================================
-   v01.6.2a — 2025-10-23 — Chat (Host)
-   Bổ sung cực nhẹ: kết nối Socket.IO + gửi/nhận tin nhắn
-   - Không ảnh hưởng logic player/queue/settings hiện có
-   - Yêu cầu: host.html đã có <script src="/socket.io/socket.io.js"></script> và window.IS_HOST = true
+   v01.6.2b — 2025-10-23 — Chat Fix
+   - Sửa lỗi: nút "Gửi 💬" không hoạt động do JS chạy trước DOM
+   - Bổ sung: nhấn phím Enter cũng gửi được tin nhắn
+   - Giữ nguyên style và logic cũ
 ========================================================= */
-(function () {
-  if (typeof io === 'undefined') return; // socket.io chưa được load ⇒ bỏ qua an toàn
+
+window.addEventListener('DOMContentLoaded', () => {
+  if (typeof io === 'undefined') return; // chưa load socket.io ⇒ bỏ qua
 
   const socket = io();
 
-  // DOM targets (nếu trang không có chat UI, an toàn bỏ qua)
   const chatBox = document.getElementById('chat-box');
   const chatInput = document.getElementById('chat-input');
   const sendBtn = document.getElementById('send-btn');
 
   if (!chatBox || !chatInput || !sendBtn) return;
 
-  // Escape HTML đơn giản
+  // Escape HTML
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, c => ({
-      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
     })[c]);
   }
 
@@ -275,11 +279,11 @@ setInterval(refresh, 2000);
     try {
       const ls = localStorage.getItem('nickname');
       if (ls && ls.trim()) return ls.trim();
-    } catch(e){}
+    } catch (e) {}
     return 'Host';
   }
 
-  // Nhận broadcast
+  // Nhận tin nhắn broadcast
   socket.on('chat_message', (data) => {
     const nameTag = data.role === 'host'
       ? `<strong style="color:#2563eb;">[HOST]</strong> ${escapeHtml(data.user)}`
@@ -291,19 +295,25 @@ setInterval(refresh, 2000);
     chatBox.scrollTop = chatBox.scrollHeight;
   });
 
-  // Gửi
-  function send() {
-    const txt = (chatInput.value || '').trim();
-    if (!txt) return;
+  // Hàm gửi tin
+  function sendMessage() {
+    const text = (chatInput.value || '').trim();
+    if (!text) return;
     socket.emit('chat_message', {
       user: getNickname(),
       role: (window.IS_HOST ? 'host' : 'user'),
-      msg: txt,
+      msg: text,
       timestamp: new Date().toISOString()
     });
     chatInput.value = '';
   }
 
-  sendBtn.addEventListener('click', send);
-  chatInput.addEventListener('keydown', (e)=>{ if (e.key === 'Enter') send(); });
-})();
+  // Gắn sự kiện Click và Enter
+  sendBtn.addEventListener('click', sendMessage);
+  chatInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault(); // tránh xuống dòng
+      sendMessage();
+    }
+  });
+});
