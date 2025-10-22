@@ -1,12 +1,11 @@
 # =========================================================
-# YouTube Queue Online — v01.6.2a (FULL)
-# Date: 2025-10-17
-# Update:
-# - Host protection + change password (v01.6.2)
-# - DEFAULT host password = "0000" (this build)
-# Notes:
-# - Keeps all previous API/logic intact (queue, nickname, settings, logo)
-# - Safer loads for empty JSON files
+# YouTube Queue Online — v01.6.2a (FULL + Chat realtime)
+# Date: 2025-10-23
+# Changes (vs v01.6.1):
+# - Keep all existing logic & routes intact (queue, nickname, settings, logo, host auth)
+# - Add Flask-SocketIO for realtime chat (very small additions)
+# - Default host password remains "0000" (as in your v01.6.2a build)
+# - If running directly: use socketio.run(); if using Procfile with gunicorn -k eventlet, OK
 # =========================================================
 
 import os, json, time, re, hashlib
@@ -15,6 +14,9 @@ from urllib.parse import urlparse, parse_qs
 from flask import Flask, request, jsonify, render_template, redirect
 from werkzeug.utils import secure_filename
 import requests
+
+# v01.6.2a — Chat (SocketIO)
+from flask_socketio import SocketIO, emit  # <-- added
 
 APP_TITLE       = os.environ.get("APP_TITLE", "YouTube Queue Online")
 HOST_API_KEY    = os.environ.get("HOST_API_KEY", "ytp-premium-2025-dxd")
@@ -26,6 +28,10 @@ STATIC_DIR      = os.path.join(os.path.dirname(__file__), "static")
 ALLOWED_LOGO_EXT = {".png", ".jpg", ".jpeg", ".gif"}
 
 app = Flask(__name__)
+
+# v01.6.2a — Chat (SocketIO)
+# Note: This creates /socket.io endpoint; works with Procfile: "gunicorn -k eventlet -w 1 app:app"
+socketio = SocketIO(app, cors_allowed_origins="*")  # <-- added
 
 # ------------------ Runtime state ------------------
 queue = deque()
@@ -548,6 +554,13 @@ def api_host_change_password():
 def healthz():
     return "ok", 200
 
+# ------------------ Chat events (SocketIO) ------------------
+# payload example: { "user": "Thảo", "role": "host"|"user", "msg": "😊", "timestamp": "..." }
+@socketio.on('chat_message')
+def on_chat_message(data):
+    # Minimal: broadcast as-is. You can add length checks / sanitize if needed.
+    emit('chat_message', data, broadcast=True)
+
 # ------------------ Boot ------------------
 def boot():
     load_config()
@@ -557,4 +570,6 @@ def boot():
 boot()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=False)
+    # If running directly (eg. local dev), use socketio.run to enable websockets.
+    # On Render with Procfile "gunicorn -k eventlet -w 1 app:app", this block is not used.
+    socketio.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=False)
