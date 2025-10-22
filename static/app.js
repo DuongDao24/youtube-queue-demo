@@ -134,7 +134,7 @@ setInterval(loadState, 2000);
 ========================================================= */
 
 window.addEventListener('DOMContentLoaded', () => {
-  if (typeof io === 'undefined') return; // chưa load socket.io ⇒ bỏ qua
+  if (typeof io === 'undefined') return; // socket.io chưa load
 
   const socket = io();
 
@@ -144,7 +144,6 @@ window.addEventListener('DOMContentLoaded', () => {
 
   if (!chatBox || !chatInput || !sendBtn) return;
 
-  // Escape HTML
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, c => ({
       '&': '&amp;',
@@ -160,10 +159,11 @@ window.addEventListener('DOMContentLoaded', () => {
       const ls = localStorage.getItem('nickname');
       if (ls && ls.trim()) return ls.trim();
     } catch (e) {}
-    return 'Host';
+    const el = document.getElementById('nickInput');
+    if (el && el.value && el.value.trim()) return el.value.trim();
+    return 'Guest';
   }
 
-  // Nhận tin nhắn broadcast
   socket.on('chat_message', (data) => {
     const nameTag = data.role === 'host'
       ? `<strong style="color:#2563eb;">[HOST]</strong> ${escapeHtml(data.user)}`
@@ -175,24 +175,22 @@ window.addEventListener('DOMContentLoaded', () => {
     chatBox.scrollTop = chatBox.scrollHeight;
   });
 
-  // Hàm gửi tin
   function sendMessage() {
     const text = (chatInput.value || '').trim();
     if (!text) return;
     socket.emit('chat_message', {
       user: getNickname(),
-      role: (window.IS_HOST ? 'host' : 'user'),
+      role: 'user',
       msg: text,
       timestamp: new Date().toISOString()
     });
     chatInput.value = '';
   }
 
-  // Gắn sự kiện Click và Enter
   sendBtn.addEventListener('click', sendMessage);
   chatInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
-      e.preventDefault(); // tránh xuống dòng
+      e.preventDefault();
       sendMessage();
     }
   });
