@@ -1,11 +1,11 @@
 <!-- =========================================================
-YouTube Queue Online — v01.6.2
-Ngày cập nhật: 17/10/2025
-Loại cập nhật: Bảo vệ trang Host + Đổi mật khẩu Host (UI)
-Cập nhật:
-- Thêm popup "HOST VERIFY" (password) phủ toàn trang, blur nền khi chưa xác minh
-- Thêm thẻ "Change Host Password" (đổi mật khẩu, xác minh bằng HOST_KEY)
-- Giữ nguyên toàn bộ phần khác (Control, Player, Queue, Settings, Logo)
+YouTube Queue Online — v01.6.2a
+Ngày cập nhật: 23/10/2025
+Loại cập nhật: + Chat realtime (Flask-SocketIO) cho trang Host
+Thay đổi tối thiểu, giữ nguyên layout/thiết kế hiện tại:
+- Thêm khối UI Chat (neu-card) ở cuối trang
+- Thêm script Socket.IO client và gắn window.IS_HOST = true
+- KHÔNG thay đổi phần Control/Player/Queue/Settings/Logo/Password
 ========================================================= -->
 <!doctype html>
 <html>
@@ -123,11 +123,33 @@ Cập nhật:
       </div>
       <div id="changeMsg" class="small mt-2"></div>
     </div>
+
+    <!-- =========================
+         v01.6.2a — Chat UI (Host)
+         ========================= -->
+    <div class="neu-card section mt-6">
+      <h2 class="font-semibold mb-3">💬 Chat</h2>
+      <div id="chat-box" class="neu-inset" style="height:250px; overflow-y:auto; padding:10px;"></div>
+      <div class="stack" style="margin-top:10px;">
+        <div style="display:flex; gap:8px;">
+          <input id="chat-input" class="neu-inset" placeholder="Gửi tin nhắn..." style="flex:1;">
+          <button id="send-btn" class="btn btn-primary">Gửi 💬</button>
+        </div>
+      </div>
+    </div>
+    <!-- ===== end Chat UI ===== -->
+
   </div>
 
   <script>
     const HOST_KEY = "{{ host_key }}"; /* dùng ngầm cho API control; không hiển thị cho user */
+    // v01.6.2a — đánh dấu là Host để JS hiển thị tag [HOST]
+    window.IS_HOST = true;
   </script>
+
+  <!-- v01.6.2a — Socket.IO client (realtime) -->
+  <script src="/socket.io/socket.io.js"></script>
+
   <script src="/static/host.js"></script>
 </body>
 </html>
